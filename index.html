@@ -206,6 +206,7 @@ ul{margin:0;padding:0;list-style:none;}
   width:calc(100% + 8px);margin:0 -4px 8px;padding:9px 8px;border:1px solid var(--line);
   border-radius:3px;background:#0F2126;font-family:var(--mono);font-size:9px;
   letter-spacing:.14em;text-transform:uppercase;color:var(--slate);}
+.disc.notes{margin-top:26px;}
 .disc:hover{color:var(--bulb);border-color:#2C5058;}
 .chev{font-style:normal;font-size:11px;line-height:1;}
 .expandall{width:100%;margin-top:10px;padding:9px;border:1px solid var(--line);
@@ -395,7 +396,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "25 — series context";
+const BUILD = "26 — method notes folded away";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -445,7 +446,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{standings:"AL", odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, recent:{}, detailState:"idle", wxAt:null, diag:{},
+  bullpens:{}, bpLg:null, recent:{}, detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, seed:0, simBusy:false,
   phase:"loading", err:null, at:null, sheet:null, swing:null, swingBusy:false
@@ -1644,7 +1645,10 @@ function renderToday(){
     + block("Tomorrow", next)
     + (mine.length + next.length === 0
         ? '<div class="empty"><h3>Nothing scheduled</h3><p>No games today or tomorrow.</p></div>' : "")
-    + '<p class="note">Weather is the forecast for first pitch at each ballpark, from Open-Meteo. '
+    + '<button class="disc notes" data-notes="1" aria-expanded="' + (S.notesOpen ? "true" : "false") + '">'
+      + '<span>Notes on the numbers</span><i class="chev" aria-hidden="true">'
+      + (S.notesOpen ? "\u25B4" : "\u25BE") + '</i></button>'
+    + (S.notesOpen ? ('<p class="note">Weather is the forecast for first pitch at each ballpark, from Open-Meteo. '
     + 'Where a park\'s home-plate-to-centre-field bearing is on file, the wind is given as the '
     + 'batter sees it — "out to left", "in from center". Where it is not, the raw bearing the wind '
     + 'comes <em>from</em> is shown instead. Parks are added to that table only once verified, so '
@@ -1683,7 +1687,7 @@ function renderToday(){
     + '<p class="note">Air is density as a share of the sea-level standard, computed from the '
     + 'measured pressure and temperature at that park. Below 100% the air is thinner, drag is lower '
     + 'and the ball carries further — that is the whole reason Coors plays the way it does, and it is '
-    + 'also why a hot afternoon plays longer than a cool evening at the same park.</p>'
+    + 'also why a hot afternoon plays longer than a cool evening at the same park.</p>') : "")
     + '</div>';
 }
 
@@ -2024,6 +2028,8 @@ document.addEventListener("click", e => {
 
   const lg = e.target.closest("[data-lg]");
   if(lg){ const [view,k] = lg.dataset.lg.split(":"); S.lg[view] = k; render(true); return; }
+
+  if(e.target.closest("[data-notes]")){ S.notesOpen = !S.notesOpen; render(); return; }
 
   const tog = e.target.closest("[data-toggle]");
   if(tog){
