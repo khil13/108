@@ -131,7 +131,7 @@ ul{margin:0;padding:0;list-style:none;}
 .shits{font-family:var(--mono);font-size:11.5px;color:#6E8A8E;text-align:right;}
 .sruns{font-family:var(--mono);font-weight:500;font-size:25px;text-align:right;
   color:#6E8A8E;line-height:1;}
-.win .sruns{color:var(--bulb);text-shadow:0 0 14px rgba(245,184,65,.4);}
+.win .sruns{font-weight:500;}
 .livebar{display:flex;align-items:center;gap:11px;padding:2px 4px 8px;}
 .matchup{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:12px;}
 .matchup span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -155,10 +155,20 @@ ul{margin:0;padding:0;list-style:none;}
   min-width:46px;}
 .batrate{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--slate);
   text-align:right;min-width:74px;text-transform:uppercase;}
-.vsline{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
-  color:#5A757A;margin:6px 0 10px 12px;}
-.vsline b{color:var(--bulb);font-weight:500;}
-.pblock .vsline:last-child{margin-bottom:0;}
+.clubhead{display:grid;grid-template-columns:3px auto 1fr;gap:9px;align-items:center;
+  padding-bottom:6px;margin-bottom:6px;border-bottom:1px solid var(--line);}
+.clubab{font-family:var(--display);font-size:14px;letter-spacing:.04em;color:var(--chalk);}
+.facing{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:#5A757A;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.facing b{color:var(--bulb);font-weight:500;}
+.clubgap{height:14px;}
+.bdash{width:3px;height:1px;background:var(--line);display:block;}
+.bpline{margin-top:10px;padding-top:9px;border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--slate);}
+.bpline em{font-style:normal;font-size:8.5px;letter-spacing:.14em;color:#5A757A;
+  margin-right:9px;}
+.bpline b{color:var(--chalk);font-weight:500;font-size:11.5px;}
 .pills{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 0 12px;}
 .pills:not(:last-child){margin-bottom:10px;}
 .pill{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;
@@ -182,6 +192,44 @@ ul{margin:0;padding:0;list-style:none;}
 .wxroof{margin-left:auto;font-family:var(--mono);font-size:9px;letter-spacing:.14em;
   text-transform:uppercase;color:#5A757A;}
 .wxroof.shut{color:var(--bulb);}
+.disc{display:flex;align-items:center;justify-content:center;gap:8px;
+  width:calc(100% + 8px);margin:0 -4px 8px;padding:9px 8px;border:1px solid var(--line);
+  border-radius:3px;background:#0F2126;font-family:var(--mono);font-size:9px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--slate);}
+.disc:hover{color:var(--bulb);border-color:#2C5058;}
+.chev{font-style:normal;font-size:11px;line-height:1;}
+.expandall{width:100%;margin-top:10px;padding:9px;border:1px solid var(--line);
+  border-radius:4px;background:transparent;font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--slate);}
+.expandall:hover{color:var(--bulb);border-color:#2C5058;}
+/* followed club */
+.follow{background:var(--deep);border:1px solid var(--line);border-left-width:3px;
+  border-radius:4px;padding:12px 13px 11px;margin-bottom:16px;}
+.fhead{display:flex;align-items:baseline;gap:10px;}
+.fname{display:flex;align-items:baseline;gap:8px;text-align:left;min-width:0;}
+.fname b{font-family:var(--display);font-size:20px;letter-spacing:.03em;color:var(--chalk);}
+.fname em{font-style:normal;font-size:12.5px;color:var(--slate);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.fname:hover b{color:var(--bulb);}
+.fpos{margin-left:auto;font-family:var(--mono);font-size:9px;letter-spacing:.12em;
+  text-transform:uppercase;color:#5A757A;white-space:nowrap;}
+.fstats{display:flex;flex-wrap:wrap;gap:14px;margin-top:9px;}
+.fstats span{font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--slate);display:flex;flex-direction:column;gap:2px;}
+.fstats b{font-size:14px;font-weight:500;color:var(--chalk);letter-spacing:0;}
+.fgame{margin-top:10px;padding-top:9px;border-top:1px solid var(--line);
+  font-size:12.5px;color:var(--slate);}
+.fgame b{color:var(--bulb);font-weight:500;font-family:var(--mono);}
+.fchange{margin-top:9px;font-family:var(--mono);font-size:9px;letter-spacing:.14em;
+  text-transform:uppercase;color:#5A757A;}
+.fchange:hover{color:var(--bulb);}
+.pgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:5px;margin-top:11px;}
+.pbtn{padding:7px 2px;border:1px solid var(--line);border-radius:3px;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;color:var(--slate);
+  background:var(--night);}
+.pbtn.on{color:var(--chalk);}
+.pbtn.wide{grid-column:span 6;}
+.pbtn:hover{color:var(--chalk);}
 .gfoot{display:flex;align-items:center;justify-content:space-between;gap:8px;
   font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:#5A757A;}
 .tlink{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--slate);white-space:nowrap;}
@@ -200,6 +248,13 @@ ul{margin:0;padding:0;list-style:none;}
 .trow:hover{background:var(--deep);}
 .tpos{font-family:var(--mono);font-size:11px;color:#4C6469;}
 .tname{display:flex;flex-direction:column;gap:1px;min-width:0;}
+.tline{display:flex;align-items:baseline;min-width:0;}
+.mag{font-style:normal;font-family:var(--mono);font-size:8px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--bulb);border:1px solid #4A3A16;background:#241D0D;
+  border-radius:2px;padding:2px 4px;margin-left:6px;vertical-align:2px;}
+.mag.dim{color:#5A757A;border-color:var(--line);background:transparent;}
+.mag.in{color:var(--grass);border-color:#1E4634;background:#0F2A1D;}
+.mag.out{color:var(--blush);border-color:#5E2029;background:#2A1418;}
 .tname b{font-family:var(--display);font-size:15px;font-weight:400;letter-spacing:.03em;}
 .tname em{font-style:normal;font-size:11px;color:var(--slate);overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;}
@@ -265,6 +320,18 @@ ul{margin:0;padding:0;list-style:none;}
 .stats b{display:block;font-family:var(--mono);font-weight:500;font-size:19px;line-height:1;}
 .stats span{display:block;margin-top:5px;font-family:var(--mono);font-size:9px;
   letter-spacing:.1em;text-transform:uppercase;color:var(--slate);}
+.rblock{margin-top:4px;}
+.rtrack{position:relative;height:8px;border-radius:4px;background:#0B1618;
+  border:1px solid var(--line);}
+.rband{position:absolute;top:0;bottom:0;background:var(--bulb);opacity:.45;border-radius:3px;}
+.rtick{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--chalk);}
+.rlabels{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  margin-top:6px;font-family:var(--mono);font-size:9px;letter-spacing:.08em;color:#4C6469;}
+.rmid{color:var(--slate);text-transform:uppercase;}
+.rmid b{color:var(--chalk);font-weight:500;font-size:11px;}
+.racenote{margin-top:14px;padding:12px 13px;border:1px solid var(--line);border-radius:4px;
+  background:var(--deep);font-size:12.5px;line-height:1.6;color:var(--slate);}
+.racenote b{color:var(--bulb);font-weight:500;font-family:var(--mono);}
 .swing{margin-top:14px;padding:13px;border:1px solid var(--line);border-radius:4px;background:var(--deep);}
 .swing p{font-size:12.5px;line-height:1.65;color:var(--slate);}
 .swing b{color:var(--bulb);font-weight:500;}
@@ -302,7 +369,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "7 — wind, air, pitchers, model line, top five power bats";
+const BUILD = "14 — clinch and elimination numbers";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -310,12 +377,17 @@ const REGRESS = 40;          // games of .500 folded into every record
 const HFA = 0.16;            // log-odds home edge; MLB homes win about 54%
 const SP_WEIGHT = 0.10;      // log-odds per run of starter ERA advantage
 const SP_CAP = 3;            // ERA gap beyond this stops adding signal
+/* A bullpen covers roughly 3.6 of a game's 9 innings against a starter's 5.4,
+   so it gets about two thirds of the starter's weight: 0.10 x 3.6/5.4. */
+const BP_WEIGHT = 0.07;
+const BP_CAP = 2.5;
+const BP_MIN_IP = 50;        // ignore a bullpen with too little work to read
 
 /* Team identity by MLB id. Ids are stable. Records, divisions, venues and
    coordinates all arrive from the API — only names and colours live here,
    and colours are brightened where the true primary is unreadable on dark. */
 const T = {
-  108:["LAA","Angels","Los Angeles","#BA0021"],   109:["AZ","D-backs","Arizona","#C2405A"],
+  108:["LAA","Angels","Los Angeles","#D22036"],   109:["AZ","D-backs","Arizona","#C2405A"],
   110:["BAL","Orioles","Baltimore","#DF4601"],    111:["BOS","Red Sox","Boston","#BD3039"],
   112:["CHC","Cubs","Chicago","#4E87D6"],         113:["CIN","Reds","Cincinnati","#D6203A"],
   114:["CLE","Guardians","Cleveland","#E31937"],  115:["COL","Rockies","Colorado","#8E6FC7"],
@@ -339,12 +411,16 @@ const col = id => (T[id] ? T[id][3] : "#7D989C");
 const DIV = {200:["AL","West"],201:["AL","East"],202:["AL","Central"],
              203:["NL","West"],204:["NL","East"],205:["NL","Central"]};
 const DIVS = {AL:[201,202,200], NL:[204,205,203]};
+/* Club ids in alphabetical order of abbreviation, for the picker grid. */
+const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1);
 
 /* ============================== state =============================== */
 
 const S = {
   tab:"today", lg:{standings:"AL", odds:"NL"},
-  teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{},
+  teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
+  bullpens:{}, bpLg:null,
+  follow:119, picker:false,
   odds:null, seed:0, simBusy:false,
   phase:"loading", err:null, at:null, sheet:null, swing:null, swingBusy:false
 };
@@ -375,6 +451,23 @@ function pictureOf(lg){
            wilds: rest.slice(0,3), chasing: rest.slice(3) };
 }
 
+/* Remember the followed club between visits. Wrapped because Safari throws
+   on storage access in private browsing rather than returning null. */
+const FOLLOW_KEY = "108.follow";
+function loadFollow(){
+  try{
+    const v = localStorage.getItem(FOLLOW_KEY);
+    if(v === "none") return null;
+    const n = Number(v);
+    if(T[n]) return n;
+  }catch(e){ /* storage unavailable; keep the default */ }
+  return S.follow;
+}
+function saveFollow(id){
+  try{ localStorage.setItem(FOLLOW_KEY, id == null ? "none" : String(id)); }
+  catch(e){ /* nothing to do; it just will not persist */ }
+}
+
 async function getJSON(url){
   const r = await fetch(url);
   if(!r.ok) throw new Error("HTTP " + r.status);
@@ -395,7 +488,9 @@ function readStandings(json){
       out[id] = { id, div:d, w:tr.wins, l:tr.losses,
         gb:tr.gamesBack, streak:(tr.streak||{}).streakCode || null,
         l10:pair(sp("lastTen")), home:pair(sp("home")), away:pair(sp("away")),
-        magic:tr.magicNumber, clinched:!!tr.clinched };
+        magic:tr.magicNumber, elim:tr.eliminationNumber,
+        wcElim:tr.wildCardEliminationNumber,
+        clinched:!!tr.clinched, clinchInd:tr.clinchIndicator || null };
     }
   }
   return out;
@@ -515,6 +610,39 @@ async function loadHitters(){
   }
   for(const k in byTeam) byTeam[k] = byTeam[k].sort((a, b) => b.hr - a.hr).slice(0, 5);
   return byTeam;
+}
+
+/* Bullpen strength, built from player lines rather than a team total, because
+   MLB's team pitching figures fold the starters in. A "reliever" here is a
+   pitcher with zero starts — unambiguous, at the cost of excluding swingmen,
+   whose innings get left out of both clubs equally. The league average is
+   computed from the same pass rather than assumed. */
+async function loadBullpens(){
+  const yr = new Date().getFullYear();
+  let j;
+  try{
+    j = await getJSON(MLB + "/stats?stats=season&group=pitching&season=" + yr
+      + "&sportId=1&sortStat=inningsPitched&order=desc&limit=1200");
+  }catch(e){ return { teams:{}, lg:null }; }
+  const splits = (j.stats && j.stats[0] && j.stats[0].splits) || [];
+  const acc = {};
+  let lgER = 0, lgIP = 0;
+  for(const s of splits){
+    const tid = (s.team || {}).id, st = s.stat || {};
+    if(!T[tid]) continue;
+    if(st.gamesStarted == null || Number(st.gamesStarted) !== 0) continue;
+    const ip = inningsOf(st.inningsPitched), er = Number(st.earnedRuns);
+    if(!ip || ip <= 0 || isNaN(er)) continue;
+    const a = acc[tid] || (acc[tid] = { ip:0, er:0 });
+    a.ip += ip; a.er += er;
+    lgER += er; lgIP += ip;
+  }
+  const teams = {};
+  for(const k in acc){
+    if(acc[k].ip < BP_MIN_IP) continue;
+    teams[k] = { era:9 * acc[k].er / acc[k].ip, ip:acc[k].ip };
+  }
+  return { teams, lg:lgIP > 0 ? 9 * lgER / lgIP : null };
 }
 
 /* Venue coordinates and roof type come from MLB, so no ballpark list is
@@ -657,6 +785,8 @@ async function load(){
       .flatMap(g => [g.hProbId, g.aProbId, g.pitcherId]).filter(Boolean))];
     if(pids.length){ S.pitchers = await loadPitchers(pids); render(); }
     S.hitters = await loadHitters(); render();
+    const bp = await loadBullpens();
+    S.bullpens = bp.teams; S.bpLg = bp.lg; render();
 
     const ids = [...new Set(S.games.map(g => g.venueId).filter(Boolean))];
     if(ids.length){
@@ -684,8 +814,11 @@ function simulate(sims, tweak){
     base[t.id] = t.w + (bump ? tweak.add : 0);
     rem[t.id] = Math.max(0, left(t) - (bump ? 1 : 0));
   }
-  const div = {}, berth = {}, top = {}, tot = {};
-  for(const t of clubs){ div[t.id]=0; berth[t.id]=0; top[t.id]=0; tot[t.id]=0; }
+  const div = {}, berth = {}, top = {}, tot = {}, hist = {};
+  for(const t of clubs){
+    div[t.id]=0; berth[t.id]=0; top[t.id]=0; tot[t.id]=0;
+    hist[t.id] = new Array(SEASON_GAMES + 1).fill(0);
+  }
   const leagues = {AL:clubs.filter(t=>DIV[t.div][0]==="AL"), NL:clubs.filter(t=>DIV[t.div][0]==="NL")};
   const wins = {}, key = {};
 
@@ -694,7 +827,7 @@ function simulate(sims, tweak){
       let w = base[t.id];
       const p = rate[t.id], n = rem[t.id];
       for(let g = 0; g < n; g++) if(Math.random() < p) w++;
-      wins[t.id] = w; tot[t.id] += w;
+      wins[t.id] = w; tot[t.id] += w; hist[t.id][w]++;
     }
     for(const lg of ["AL","NL"]){
       const pool = leagues[lg];
@@ -712,9 +845,22 @@ function simulate(sims, tweak){
       if(champs.length) top[champs[0].id]++;
     }
   }
+  /* Read a percentile straight off the histogram: walk up the win totals
+     until the requested share of simulated seasons is behind you. */
+  const pctileOf = (h, q) => {
+    const target = q * sims;
+    let acc = 0;
+    for(let w = 0; w < h.length; w++){ acc += h[w]; if(acc >= target) return w; }
+    return h.length - 1;
+  };
+
   const o = {};
-  for(const t of clubs) o[t.id] = { div:div[t.id]/sims, berth:berth[t.id]/sims,
-                                    top:top[t.id]/sims, projWins:tot[t.id]/sims };
+  for(const t of clubs){
+    const h = hist[t.id];
+    o[t.id] = { div:div[t.id]/sims, berth:berth[t.id]/sims,
+                top:top[t.id]/sims, projWins:tot[t.id]/sims,
+                p10:pctileOf(h, 0.10), p50:pctileOf(h, 0.50), p90:pctileOf(h, 0.90) };
+  }
   return o;
 }
 
@@ -737,14 +883,22 @@ function project(g){
   let d = lg(rate(h)) - lg(rate(a)) + HFA;
 
   const hp = S.pitchers[g.hProbId], ap = S.pitchers[g.aProbId];
-  let usedSP = false;
+  let usedSP = false, usedBP = false;
   if(hp && ap && hp.era != null && ap.era != null){
     const gap = Math.max(-SP_CAP, Math.min(SP_CAP, ap.era - hp.era));
     d += SP_WEIGHT * gap;
     usedSP = true;
   }
+
+  const homeBp = S.bullpens[g.hid], awayBp = S.bullpens[g.aid];
+  if(homeBp && awayBp){
+    const gap = Math.max(-BP_CAP, Math.min(BP_CAP, awayBp.era - homeBp.era));
+    d += BP_WEIGHT * gap;
+    usedBP = true;
+  }
+
   const pHome = 1 / (1 + Math.exp(-d));
-  return { pHome, pAway:1 - pHome, usedSP };
+  return { pHome, pAway:1 - pHome, usedSP, usedBP };
 }
 
 /* Fair American odds. The two sides sum to 100%, so unlike a real book there
@@ -766,36 +920,48 @@ function projectionBlock(g){
     + '<span class="pname">' + ab(teamId) + '<em>' + esc(nm(teamId)) + '</em></span>'
     + '<span class="mlpct">' + Math.round(p * 100) + '%</span>'
     + '<span class="mlodds">' + american(p) + '</span></div>';
+  const inputs = ["records"];
+  if(pr.usedSP) inputs.push("starters");
+  if(pr.usedBP) inputs.push("bullpens");
+  const label = inputs.length === 1 ? "records only"
+    : inputs.slice(0, -1).join(", ") + " and " + inputs[inputs.length - 1];
   return '<div class="pblock">'
-    + '<h5 class="plabel">Model line · '
-      + (pr.usedSP ? "records and starters" : "records only") + '</h5>'
+    + '<h5 class="plabel">Model line · ' + label + '</h5>'
     + row(g.aid, pr.pAway) + row(g.hid, pr.pHome) + '</div>';
 }
 
 /* The bats that can end an at-bat in one swing, against the arm they face.
    Deliberately rates rather than a probability: "one per 18 plate
    appearances" is what has happened, and it cannot be mistaken for a
-   forecast the way "9% tonight" would be. */
+   forecast the way "9% tonight" would be.
+
+   Each club gets a header naming the opposing starter, so the group of
+   hitters underneath is unambiguously the group facing that arm. */
 function powerBlock(g){
   if(g.st !== "sched") return "";
   const side = (teamId, oppPid) => {
     const bats = (S.hitters[teamId] || []).slice(0, 5);
     if(!bats.length) return "";
     const opp = S.pitchers[oppPid];
-    return bats.map(b => '<div class="mlrow">'
+    const facing = opp && opp.hr9 != null
+      ? 'vs ' + esc((opp.name || "").split(" ").slice(-1)[0])
+        + ' <b>' + opp.hr9.toFixed(1) + '</b> HR/9'
+      : (opp && opp.name ? 'vs ' + esc(opp.name.split(" ").slice(-1)[0]) : "");
+    return '<div class="clubhead">'
       + '<span class="tbar" style="background:' + col(teamId) + '"></span>'
-      + '<span class="pname">' + esc(b.name) + '<em>' + ab(teamId) + '</em></span>'
-      + '<span class="mlpct">' + b.hr + ' HR</span>'
-      + '<span class="batrate">1 per ' + Math.round(b.perPA) + ' PA</span></div>').join("")
-      + (opp && opp.hr9 != null
-          ? '<div class="vsline">facing ' + esc(opp.name || "opposing starter")
-            + ' — <b>' + opp.hr9.toFixed(1) + '</b> HR/9</div>'
-          : "");
+      + '<span class="clubab">' + ab(teamId) + '</span>'
+      + '<span class="facing">' + facing + '</span></div>'
+      + bats.map(b => '<div class="mlrow">'
+        + '<span class="bdash"></span>'
+        + '<span class="pname">' + esc(b.name) + '</span>'
+        + '<span class="mlpct">' + b.hr + ' HR</span>'
+        + '<span class="batrate">1 per ' + Math.round(b.perPA) + ' PA</span></div>').join("");
   };
   // Visitors bat against the home starter, and the reverse.
   const away = side(g.aid, g.hProbId), home = side(g.hid, g.aProbId);
   if(!away && !home) return "";
-  return '<div class="pblock"><h5 class="plabel">Power on show</h5>' + away + home + '</div>';
+  return '<div class="pblock"><h5 class="plabel">Power on show</h5>'
+    + away + (away && home ? '<div class="clubgap"></div>' : "") + home + '</div>';
 }
 
 /* ============================== rendering =========================== */
@@ -846,14 +1012,18 @@ function stakes(g){
 }
 
 function side(id, runs, hits, won, blank, batting){
-  const t = S.teams[id];
+  const t = S.teams[id], c = col(id);
+  // The run total carries the club's colour. The leader also gets a glow in
+  // that colour, so who is ahead still reads instantly on a dark panel.
+  const runStyle = blank ? ""
+    : ' style="color:' + c + (won ? ';text-shadow:0 0 15px ' + c + '66' : '') + '"';
   return '<div class="srow' + (won ? " win" : "") + '">'
-    + '<span class="tbar" style="background:' + col(id) + '"></span>'
+    + '<span class="tbar" style="background:' + c + '"></span>'
     + '<span class="sabbr">' + ab(id) + (batting ? '<i class="atbat"></i>' : "") + '</span>'
     + '<span class="sname">' + esc(nm(id)) + '</span>'
     + '<span class="srec">' + (t ? t.w + "–" + t.l : "") + '</span>'
     + '<span class="shits">' + (hits == null ? "" : hits) + '</span>'
-    + '<span class="sruns">' + (blank ? "" : runs) + '</span></div>';
+    + '<span class="sruns"' + runStyle + '>' + (blank ? "" : runs) + '</span></div>';
 }
 
 function weatherStrip(g){
@@ -914,9 +1084,17 @@ function pitcherLine(teamId, pid, fallbackName){
 
 function starters(g){
   if(!g.aProb && !g.hProb && !g.aProbId && !g.hProbId) return "";
+  const bp = (teamId) => {
+    const b = S.bullpens[teamId];
+    return b ? ab(teamId) + ' <b>' + b.era.toFixed(2) + '</b>' : "";
+  };
+  const a = bp(g.aid), h = bp(g.hid);
+  const lgTxt = S.bpLg != null ? ' \u00b7 lg ' + S.bpLg.toFixed(2) : "";
   return '<div class="pblock"><h5 class="plabel">Starters</h5>'
     + pitcherLine(g.aid, g.aProbId, g.aProb)
-    + pitcherLine(g.hid, g.hProbId, g.hProb) + '</div>';
+    + pitcherLine(g.hid, g.hProbId, g.hProb)
+    + (a && h ? '<div class="bpline"><em>bullpen era</em>' + a + ' \u00b7 ' + h + lgTxt + '</div>' : "")
+    + '</div>';
 }
 
 /* Whoever is throwing right now. The defence is the side not batting. */
@@ -925,6 +1103,21 @@ function onMound(g){
   const teamId = /top/i.test(g.half || "") ? g.hid : g.aid;
   return '<div class="pblock"><h5 class="plabel">On the mound</h5>'
     + pitcherLine(teamId, g.pitcherId, g.pitcher) + '</div>';
+}
+
+/* The detail blocks are the bulk of a card's height, so they fold away by
+   default. Score, time and conditions stay visible — enough to scan fifteen
+   games — and one tap opens the rest. */
+function detail(g){
+  const inner = starters(g) + powerBlock(g) + projectionBlock(g);
+  if(!inner) return "";
+  const open = !!S.open[g.pk];
+  const label = open
+    ? '<span>Less</span><i class="chev">\u25B4</i>'
+    : '<span>Starters · power · model line</span><i class="chev">\u25BE</i>';
+  return (open ? inner : "")
+    + '<button class="disc" data-toggle="' + g.pk + '" aria-expanded="' + open + '">'
+    + label + '</button>';
 }
 
 function gameCard(g){
@@ -959,10 +1152,84 @@ function gameCard(g){
           + '</div></div>'
         : "")
     + onMound(g)
-    + (g.st === "sched" ? starters(g) + powerBlock(g) + projectionBlock(g) : "")
+    + (g.st === "sched" ? detail(g) : "")
     + '<footer class="gfoot"><span>' + esc(g.venue || city(g.hid)) + '</span>'
     + '<button class="tlink" data-team="' + g.hid + '">' + ab(g.hid) + ' outlook →</button>'
     + '</footer></article>';
+}
+
+/* The club you follow, and the one thing you actually want to know about it:
+   what is happening right now, or next. Live game beats upcoming beats last
+   result. */
+function followState(id){
+  const mine = g => g.hid === id || g.aid === id;
+  const live = S.games.find(g => mine(g) && g.st === "live");
+  if(live) return { g:live, kind:"live" };
+  const next = S.games.filter(g => mine(g) && g.st === "sched")
+    .sort((a,b) => new Date(a.start) - new Date(b.start))[0];
+  if(next) return { g:next, kind:"next" };
+  const last = S.games.filter(g => mine(g) && g.st === "final")
+    .sort((a,b) => new Date(b.start) - new Date(a.start))[0];
+  return last ? { g:last, kind:"last" } : null;
+}
+
+function followStrip(){
+  const id = S.follow;
+  if(!id || !S.teams || !S.teams[id]) return followPicker();
+  const t = S.teams[id], o = S.odds && S.odds[id];
+  const rows = inDiv(t.div), rank = rows.findIndex(x => x.id === id) + 1;
+  const ord = ["", "1st", "2nd", "3rd", "4th", "5th"][rank] || rank + "th";
+  const d = DIV[t.div];
+  const st = followState(id);
+
+  let line = "No game in this window.";
+  if(st){
+    const g = st.g, home = g.hid === id, opp = home ? g.aid : g.hid;
+    const vs = (home ? "vs " : "at ") + ab(opp);
+    if(st.kind === "live"){
+      const me = home ? g.hs : g.as, them = home ? g.as : g.hs;
+      const edge = me > them ? "up" : me < them ? "down" : "tied";
+      line = '<b>' + me + '\u2013' + them + '</b> ' + edge + ' ' + vs
+        + ' \u00b7 ' + inningText(g);
+    } else if(st.kind === "next"){
+      line = vs + ' \u00b7 ' + dayName(g.start) + ' ' + clock(g.start);
+    } else {
+      const me = home ? g.hs : g.as, them = home ? g.as : g.hs;
+      line = (me > them ? "Won " : "Lost ") + me + '\u2013' + them + ' ' + vs;
+    }
+  }
+
+  return '<section class="follow" style="border-left-color:' + col(id) + '">'
+    + '<div class="fhead">'
+    + '<button class="fname" data-team="' + id + '">'
+      + '<b>' + ab(id) + '</b><em>' + esc(city(id) + " " + nm(id)) + '</em></button>'
+    + '<span class="fpos">' + ord + ' ' + d.lg + ' ' + d.name + '</span>'
+    + '</div>'
+    + '<div class="fstats">'
+      + '<span><b>' + t.w + '\u2013' + t.l + '</b>record</span>'
+      + '<span><b>' + gbText(gbTo(t, rows[0])) + '</b>gb</span>'
+      + '<span><b>' + (o ? pc(o.berth) + '%' : '\u2014') + '</b>october</span>'
+      + '<span><b>' + (o ? o.p10 + '\u2013' + o.p90 : '\u2014') + '</b>wins</span>'
+    + '</div>'
+    + '<p class="fgame">' + line + '</p>'
+    + '<button class="fchange" id="changeTeam">'
+      + (S.picker ? "Close" : "Change club") + '</button>'
+    + (S.picker ? pickerGrid() : "")
+    + '</section>';
+}
+
+function followPicker(){
+  return '<section class="follow" style="border-left-color:var(--line)">'
+    + '<p class="fgame">Pick a club to follow and its state shows here first.</p>'
+    + pickerGrid() + '</section>';
+}
+
+function pickerGrid(){
+  return '<div class="pgrid">'
+    + CLUB_IDS.map(id => '<button class="pbtn' + (S.follow === id ? " on" : "") + '"'
+      + ' data-follow="' + id + '" style="border-color:'
+      + (S.follow === id ? col(id) : "var(--line)") + '">' + ab(id) + '</button>').join("")
+    + '<button class="pbtn wide" data-follow="none">None</button></div>';
 }
 
 function renderToday(){
@@ -1003,14 +1270,22 @@ function renderToday(){
        [blowingOut, "wind blowing out"],
        [thin ? thin : stakesToday, thin ? "thin air" : "with stakes"]];
 
+  const todaySched = mine.filter(g => g.st === "sched").map(g => g.pk);
+  const allOpen = todaySched.length > 0 && todaySched.every(p => S.open[p]);
+
   const block = (title, arr) => arr.length
     ? '<h2 class="eyebrow">' + title + '</h2><div class="grid">' + arr.map(gameCard).join("") + '</div>'
     : "";
 
   return '<div class="pane">'
+    + followStrip()
     + '<div class="ledger">'
     + panels.map(([n,label]) => '<div><b>' + n + '</b><span>' + label + '</span></div>').join("")
     + '</div>'
+    + (todaySched.length
+        ? '<button class="expandall" id="expandAll">'
+          + (allOpen ? "Collapse all cards" : "Expand all cards") + '</button>'
+        : "")
     + block("On the field now", live)
     + block("Final today", fin)
     + block("Still to come", soon)
@@ -1030,11 +1305,20 @@ function renderToday(){
     + 'multiplied them into a single "chance of a homer tonight", because every weight in '
     + 'that multiplication would be invented and the answer would look far more precise '
     + 'than it could possibly be.</p>'
+    + '<p class="note">One limitation worth knowing: MLB reports hitting stats against '
+    + 'the club a player earned them with, so a mid-season trade can leave someone listed '
+    + 'under a former team, or split across two. There is no roster check here to catch '
+    + 'it. If a name looks out of place, that is why.</p>'
     + '<p class="note">The model line is this app\'s own view: each club\'s '
     + 'winning percentage regressed toward .500, a home edge worth about four points, '
     + 'and a damped adjustment for the gap between the two starters\' ERAs. The two '
     + 'sides sum to 100%, so these are fair odds with no margin — a real book\'s prices '
     + 'will differ for that reason alone.</p>'
+    + '<p class="note">Bullpens are in it too, at roughly two thirds the starter\'s '
+    + 'weight, since relief covers about 3.6 of a game\'s 9 innings against a starter\'s '
+    + '5.4. A club\'s bullpen ERA is built from its pitchers with zero starts, so '
+    + 'swingmen are excluded from both sides equally, and the league average it is '
+    + 'measured against is computed from the same data rather than assumed.</p>'
     + '<p class="note">It is not a betting signal. A market price also carries bullpen '
     + 'condition, lineup cards, injuries, umpires, travel and the weight of money, none '
     + 'of which are in here, and nothing in this model has been tested against actual '
@@ -1044,6 +1328,76 @@ function renderToday(){
     + 'and the ball carries further — that is the whole reason Coors plays the way it does, and it is '
     + 'also why a hot afternoon plays longer than a cool evening at the same park.</p>'
     + '</div>';
+}
+
+/* ---------------- clinch and elimination ----------------
+   A leader's magic number is the combined total of its own wins and its
+   nearest rival's losses that guarantees the division: the rival's maximum
+   possible wins, less the leader's current wins, plus one. A trailing club's
+   elimination number is the same arithmetic run the other way.
+
+   MLB publishes both, and its figures account for tiebreakers, so they are
+   preferred. The computed version is a fallback for when the field is absent
+   or dashed out. */
+const raceNum = v => {
+  if(v == null) return null;
+  const s = String(v).trim();
+  if(s === "" || s === "-") return null;
+  if(s === "E") return 0;
+  const n = Number(s);
+  return isNaN(n) ? null : n;
+};
+
+function raceInfo(t){
+  const rows = inDiv(t.div);
+  if(!rows.length) return null;
+  const leader = rows[0], isLeader = leader.id === t.id;
+  const maxWins = c => c.w + Math.max(0, SEASON_GAMES - c.w - c.l);
+
+  if(t.clinched) return { kind:"clinched" };
+
+  if(isLeader){
+    const mlb = raceNum(t.magic);
+    let calc = 0;
+    for(const r of rows){
+      if(r.id === t.id) continue;
+      const v = maxWins(r) - t.w + 1;
+      if(v > calc) calc = v;
+    }
+    const n = mlb != null ? mlb : Math.max(0, calc);
+    return n <= 0 ? { kind:"clinched" } : { kind:"magic", n, source:mlb != null ? "mlb" : "calc" };
+  }
+
+  const mlb = raceNum(t.elim);
+  const calc = maxWins(t) - leader.w + 1;
+  const n = mlb != null ? mlb : Math.max(0, calc);
+  return n <= 0 ? { kind:"out" } : { kind:"elim", n, source:mlb != null ? "mlb" : "calc" };
+}
+
+function raceBadge(t){
+  const r = raceInfo(t);
+  if(!r) return "";
+  if(r.kind === "clinched") return '<i class="mag in">clinched</i>';
+  if(r.kind === "out") return '<i class="mag out">out</i>';
+  if(r.kind === "magic") return '<i class="mag">m' + r.n + '</i>';
+  return '<i class="mag dim">e' + r.n + '</i>';
+}
+
+/* Plain language beats a bare number in the team sheet. */
+function raceSentence(t){
+  const r = raceInfo(t);
+  if(!r) return "";
+  const rows = inDiv(t.div), leader = rows[0], d = DIV[t.div];
+  const div = d[0] + " " + d[1];
+  if(r.kind === "clinched") return ab(t.id) + " has clinched the " + div + ".";
+  if(r.kind === "out") return ab(t.id) + " is out of the " + div + " race.";
+  if(r.kind === "magic"){
+    const rival = rows[1];
+    return ab(t.id) + " clinches the " + div + " with any combination of <b>" + r.n
+      + "</b> wins of their own and " + (rival ? ab(rival.id) : "the field") + " losses.";
+  }
+  return ab(t.id) + " is eliminated from the " + div + " after any combination of <b>"
+    + r.n + "</b> losses of their own and " + ab(leader.id) + " wins.";
 }
 
 function divTable(d){
@@ -1057,7 +1411,8 @@ function divTable(d){
       '<button class="trow" data-team="' + t.id + '">'
       + '<span class="tpos">' + (i+1) + '</span>'
       + '<span class="tbar" style="background:' + col(t.id) + '"></span>'
-      + '<span class="tname"><b>' + ab(t.id) + '</b><em>' + esc(nm(t.id)) + '</em></span>'
+      + '<span class="tname"><span class="tline"><b>' + ab(t.id) + '</b>' + raceBadge(t)
+        + '</span><em>' + esc(nm(t.id)) + '</em></span>'
       + '<span class="tnum">' + t.w + "–" + t.l + '</span>'
       + '<span class="tnum dim">' + fmt3(pct(t)) + '</span>'
       + '<span class="tnum dim">' + (t.gb && t.gb !== "-" ? t.gb : gbText(gbTo(t,lead))) + '</span>'
@@ -1117,12 +1472,12 @@ function renderOdds(){
         + (lg===k?"on":"") + '" data-lg="odds:' + k + '">'
         + (k==="AL"?"American":"National") + '</button>').join("")
     + '</div>'
-    + '<div class="othead thead"><span>Club</span><span>Proj</span><span>Div</span><span>#1</span><span>Oct</span></div>'
-    + rows.map(t => { const x = o[t.id], pw = Math.round(x.projWins);
+    + '<div class="othead thead"><span>Club</span><span>Wins</span><span>Div</span><span>#1</span><span>Oct</span></div>'
+    + rows.map(t => { const x = o[t.id];
       return '<button class="orow" data-team="' + t.id + '">'
         + '<span class="tbar" style="background:' + col(t.id) + '"></span>'
         + '<span class="tname"><b>' + ab(t.id) + '</b><em>' + esc(nm(t.id)) + '</em></span>'
-        + '<span class="tnum dim">' + pw + "–" + (SEASON_GAMES-pw) + '</span>'
+        + '<span class="tnum dim">' + x.p10 + "–" + x.p90 + '</span>'
         + '<span class="tnum dim">' + pc(x.div) + '%</span>'
         + '<span class="tnum dim sm">' + pc(x.top) + '%</span>'
         + '<span class="obar"><i style="width:' + Math.max(1.5, x.berth*100) + '%;background:'
@@ -1131,11 +1486,33 @@ function renderOdds(){
     + '<p>Each club plays out its remaining games at its own winning percentage, pulled toward .500 '
     + 'by ' + REGRESS + ' games so a hot stretch does not run away with the forecast. Three division '
     + 'winners and three wild cards per league; ties are coin flips.</p>'
+    + '<p>The Wins column is the middle 80% of those simulated seasons — the tenth to '
+    + 'ninetieth percentile — rather than a single average, because the average hides how '
+    + 'wide the real spread still is. Tap a club for the full band and its median.</p>'
     + '<p class="caveat">Not in the model: strength of schedule, run differential, injuries, trades '
     + 'or home-field advantage. Read gaps of a few points as noise.</p>'
     + '<div class="mrow"><span>' + SIMS.toLocaleString() + ' seasons</span>'
     + '<button class="btn" id="rerun"' + (S.simBusy?" disabled":"") + '>'
     + (S.simBusy ? "Simulating…" : "Run it again") + '</button></div></div></div>';
+}
+
+/* The simulated win totals as a band rather than a single number. The axis
+   is fixed so the width of one club's band is comparable to another's — a
+   contender 100 games in has a narrower spread than a .500 club, and that
+   is worth being able to see. */
+function rangeBar(o){
+  const LO = 50, HI = 115, span = HI - LO;
+  const x = w => Math.max(0, Math.min(100, (w - LO) / span * 100));
+  const l = x(o.p10), r = x(o.p90), m = x(o.p50);
+  return '<div class="rblock">'
+    + '<h4 class="ssub">Win total, middle 80% of seasons</h4>'
+    + '<div class="rtrack">'
+    + '<i class="rband" style="left:' + l + '%;width:' + Math.max(1.5, r - l) + '%"></i>'
+    + '<i class="rtick" style="left:' + m + '%"></i>'
+    + '</div>'
+    + '<div class="rlabels"><span>' + LO + '</span>'
+    + '<span class="rmid"><b>' + o.p10 + '\u2013' + o.p90 + '</b> wins, median ' + o.p50 + '</span>'
+    + '<span>' + HI + '</span></div></div>';
 }
 
 function renderSheet(){
@@ -1162,6 +1539,8 @@ function renderSheet(){
     + '<div class="stats"><div><b>' + Math.round(o.projWins) + '</b><span>projected wins</span></div>'
     + '<div><b>' + pc(o.div) + '%</b><span>win division</span></div>'
     + '<div><b>' + pc(o.berth) + '%</b><span>reach october</span></div></div>'
+    + rangeBar(o)
+    + '<p class="racenote">' + raceSentence(t) + '</p>'
     + '<div class="swing">' + (S.swing != null
         ? '<p>One win instead of one loss moves ' + ab(id) + '\u2019s October odds by <b>'
           + (S.swing*100).toFixed(1) + ' points</b>. Every remaining game carries roughly this much.</p>'
@@ -1186,7 +1565,12 @@ function renderSheet(){
     + '</div></div>';
 }
 
-function render(){
+/* Rebuilding the whole page loses the scroll position, which is right when
+   the view changes and wrong for everything else — expanding a card, or a
+   background refresh, should leave you where you were. Pass true only when
+   a genuinely new view is being shown. */
+function render(resetScroll){
+  const keep = resetScroll ? 0 : window.scrollY;
   const app = document.getElementById("app");
   const live = S.games.some(g => g.st === "live");
   const stamp = S.at ? clock(S.at) : "";
@@ -1222,16 +1606,47 @@ function render(){
     + 'Odds simulated in this browser from the records above.<br>'
     + 'Build ' + BUILD + '</footer>'
     + (S.sheet ? renderSheet() : "");
+
+  if(keep) window.scrollTo(0, keep);
 }
 
 /* ============================== events ============================== */
 
 document.addEventListener("click", e => {
   const tab = e.target.closest("[data-tab]");
-  if(tab){ S.tab = tab.dataset.tab; render(); return; }
+  if(tab){ S.tab = tab.dataset.tab; render(true); return; }
 
   const lg = e.target.closest("[data-lg]");
-  if(lg){ const [view,k] = lg.dataset.lg.split(":"); S.lg[view] = k; render(); return; }
+  if(lg){ const [view,k] = lg.dataset.lg.split(":"); S.lg[view] = k; render(true); return; }
+
+  const tog = e.target.closest("[data-toggle]");
+  if(tog){
+    const pk = tog.dataset.toggle;
+    S.open[pk] = !S.open[pk];
+    render();
+    return;
+  }
+
+  if(e.target.closest("#changeTeam")){ S.picker = !S.picker; render(); return; }
+
+  const fol = e.target.closest("[data-follow]");
+  if(fol){
+    const v = fol.dataset.follow;
+    S.follow = v === "none" ? null : Number(v);
+    S.picker = false;
+    saveFollow(S.follow);
+    render();
+    return;
+  }
+
+  if(e.target.closest("#expandAll")){
+    const today = iso(new Date());
+    const pks = S.games.filter(g => g.date === today && g.st === "sched").map(g => g.pk);
+    const anyClosed = pks.some(p => !S.open[p]);
+    pks.forEach(p => { S.open[p] = anyClosed; });
+    render();
+    return;
+  }
 
   const team = e.target.closest("[data-team]");
   if(team){ S.sheet = Number(team.dataset.team); S.swing = null; render(); return; }
@@ -1277,6 +1692,7 @@ document.addEventListener("visibilitychange", () => {
   if(!document.hidden && S.at && Date.now() - S.at.getTime() > 60000) load();
 });
 
+S.follow = loadFollow();
 load();
 </script>
 </body>
