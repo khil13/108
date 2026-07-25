@@ -203,6 +203,16 @@ ul{margin:0;padding:0;list-style:none;}
   letter-spacing:.14em;text-transform:uppercase;color:var(--slate);}
 .expandall:hover{color:var(--bulb);border-color:#2C5058;}
 /* followed club */
+/* since last visit */
+.since{background:#0F2126;border:1px solid #1C3A40;border-radius:4px;
+  padding:12px 13px 10px;margin-bottom:16px;}
+.sincehead{font-family:var(--mono);font-size:9px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--bulb);margin-bottom:8px;}
+.since p{font-size:13px;line-height:1.55;color:var(--slate);margin-bottom:4px;}
+.since p b{color:var(--chalk);font-family:var(--display);font-size:15px;
+  font-weight:400;letter-spacing:.03em;}
+.sincefoot{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:#5A757A;margin-top:7px;}
 .follow{background:var(--deep);border:1px solid var(--line);border-left-width:3px;
   border-radius:4px;padding:12px 13px 11px;margin-bottom:16px;}
 .fhead{display:flex;align-items:baseline;gap:10px;}
@@ -369,7 +379,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "18 — palette separation";
+const BUILD = "19 — since you last looked";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -420,7 +430,7 @@ const S = {
   tab:"today", lg:{standings:"AL", odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
   bullpens:{}, bpLg:null,
-  follow:119, picker:false,
+  follow:119, picker:false, baseline:null,
   odds:null, seed:0, simBusy:false,
   phase:"loading", err:null, at:null, sheet:null, swing:null, swingBusy:false
 };
@@ -449,6 +459,38 @@ function pictureOf(lg){
   const rest = inLg(lg).filter(t => !leaders.includes(t));
   return { seeds: leaders.slice().sort((a,b) => pct(b)-pct(a)),
            wilds: rest.slice(0,3), chasing: rest.slice(3) };
+}
+
+/* A snapshot of the league as it stood when you last marked it seen, so the
+   next visit can report what moved. Records are exact. Odds are stored too,
+   but see sinceBlock for why they are only reported conditionally. */
+const BASE_KEY = "108.baseline";
+function loadBaseline(){
+  try{
+    const raw = localStorage.getItem(BASE_KEY);
+    if(!raw) return null;
+    const b = JSON.parse(raw);
+    return b && b.teams && b.at ? b : null;
+  }catch(e){ return null; }
+}
+function saveBaseline(){
+  if(!S.teams) return;
+  const teams = {}, odds = {};
+  for(const t of list()) teams[t.id] = [t.w, t.l];
+  if(S.odds) for(const k in S.odds) odds[k] = Math.round(S.odds[k].berth * 1000) / 10;
+  const snap = { at:new Date().toISOString(), teams, odds };
+  try{ localStorage.setItem(BASE_KEY, JSON.stringify(snap)); }catch(e){}
+  S.baseline = snap;
+}
+
+function timeAgo(iso){
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if(mins < 2) return "moments ago";
+  if(mins < 60) return mins + " minutes ago";
+  const hrs = Math.round(mins / 60);
+  if(hrs < 24) return hrs + (hrs === 1 ? " hour ago" : " hours ago");
+  const days = Math.round(hrs / 24);
+  return days + (days === 1 ? " day ago" : " days ago");
 }
 
 /* Remember the followed club between visits. Wrapped because Safari throws
@@ -778,6 +820,7 @@ async function load(){
     S.games = readGames(sc);
     S.phase = "ready"; S.err = null; S.at = new Date();
     S.odds = simulate(SIMS);
+    if(!S.baseline) saveBaseline();   // first visit: record the starting point silently
     render();
 
     // Enrichments, each optional and none of them blocking the scores.
@@ -1242,6 +1285,83 @@ function pickerGrid(){
     + '<button class="pbtn wide" data-follow="none">None</button></div>';
 }
 
+/* What moved since the baseline.
+
+   Records are exact, so a win or loss is reported plainly. Odds are not: they
+   come out of a 5,000-season Monte Carlo whose own standard error is close to
+   a percentage point, so an unchanged record with a "different" probability is
+   noise, not news. Odds movement is therefore only reported for clubs whose
+   record actually changed, and only past a point of movement. */
+function sinceBlock(){
+  const b = S.baseline;
+  if(!b || !S.teams || !S.odds) return "";
+
+  const known = id => b.teams[id] || b.teams[String(id)];
+  const clubs = list().filter(t => known(t.id));
+  if(!clubs.length) return "";
+
+  const played = clubs.reduce((n,t) => n + t.w + t.l, 0)
+    - clubs.reduce((n,t) => { const [w,l] = known(t.id); return n + w + l; }, 0);
+  const games = Math.round(played / 2);
+
+  const moved = t => { const [w,l] = known(t.id); return t.w !== w || t.l !== l; };
+  const oddsDelta = t => {
+    if(!moved(t)) return null;                     // unchanged record: any diff is noise
+    const prev = b.odds ? (b.odds[t.id] != null ? b.odds[t.id] : b.odds[String(t.id)]) : null;
+    if(prev == null) return null;
+    const d = S.odds[t.id].berth * 100 - prev;
+    return Math.abs(d) >= 1 ? d : null;
+  };
+
+  const lines = [];
+  const id = S.follow;
+
+  if(id && S.teams[id] && known(id)){
+    const t = S.teams[id], [bw, bl] = known(id);
+    const dw = t.w - bw, dl = t.l - bl;
+    if(dw || dl){
+      const rows = inDiv(t.div), lead = rows[0];
+      const verb = dw && dl ? "went " + dw + "\u2013" + dl
+        : dw ? (dw === 1 ? "won" : "won " + dw)
+             : (dl === 1 ? "lost" : "lost " + dl);
+      let s = '<b>' + ab(id) + '</b> ' + verb + ', now ' + t.w + '\u2013' + t.l;
+      s += lead.id === t.id
+        ? ' and lead the ' + DIV[t.div][1] + ' by ' + gbText(gbTo(rows[1], t))
+        : ', ' + gbText(gbTo(t, lead)) + ' back';
+      const od = oddsDelta(t);
+      if(od != null) s += ' \u00b7 October ' + (od > 0 ? "+" : "\u2212")
+        + Math.abs(od).toFixed(0) + ' pts';
+      lines.push(s);
+    }
+
+    // Rivals matter as much as your own result when you are chasing or leading.
+    const rivals = inDiv(S.teams[id].div).filter(t => t.id !== id && moved(t));
+    if(rivals.length){
+      lines.push('In the ' + DIV[S.teams[id].div][1] + ': ' + rivals.map(t => {
+        const [w,l] = known(t.id);
+        const dw = t.w - w, dl = t.l - l;
+        return ab(t.id) + " " + (dw && dl ? dw + "\u2013" + dl : dw ? "won" : "lost");
+      }).join(", "));
+    }
+  }
+
+  if(!lines.length){
+    lines.push(games > 0
+      ? games + (games === 1 ? " game" : " games") + " finished, nothing that touches "
+        + (id ? ab(id) : "the standings")
+      : "Nothing has changed.");
+  }
+
+  return '<section class="since">'
+    + '<h5 class="sincehead">Since ' + timeAgo(b.at) + '</h5>'
+    + lines.map(l => '<p>' + l + '</p>').join("")
+    + (games > 0 && lines.length > 1
+        ? '<p class="sincefoot">' + games + (games === 1 ? " game" : " games")
+          + ' finished league-wide.</p>' : "")
+    + '<button class="fchange" id="markSeen">Mark as seen</button>'
+    + '</section>';
+}
+
 function renderToday(){
   const today = iso(new Date()), yday = iso(shift(-1)), tmw = iso(shift(1));
   const mine = S.games.filter(g => g.date === today);
@@ -1289,6 +1409,7 @@ function renderToday(){
 
   return '<div class="pane">'
     + followStrip()
+    + sinceBlock()
     + '<div class="ledger">'
     + panels.map(([n,label]) => '<div><b>' + n + '</b><span>' + label + '</span></div>').join("")
     + '</div>'
@@ -1637,6 +1758,8 @@ document.addEventListener("click", e => {
     return;
   }
 
+  if(e.target.closest("#markSeen")){ saveBaseline(); render(); return; }
+
   if(e.target.closest("#changeTeam")){ S.picker = !S.picker; render(); return; }
 
   const fol = e.target.closest("[data-follow]");
@@ -1703,6 +1826,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 S.follow = loadFollow();
+S.baseline = loadBaseline();
 load();
 </script>
 </body>
