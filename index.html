@@ -369,7 +369,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "15 — live card fixes: bases, count, weather strip";
+const BUILD = "18 — palette separation";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -391,16 +391,16 @@ const T = {
   110:["BAL","Orioles","Baltimore","#DF4601"],    111:["BOS","Red Sox","Boston","#BD3039"],
   112:["CHC","Cubs","Chicago","#4E87D6"],         113:["CIN","Reds","Cincinnati","#D6203A"],
   114:["CLE","Guardians","Cleveland","#E31937"],  115:["COL","Rockies","Colorado","#8E6FC7"],
-  116:["DET","Tigers","Detroit","#FA4616"],       117:["HOU","Astros","Houston","#EB6E1F"],
-  118:["KC","Royals","Kansas City","#4A7FD1"],    119:["LAD","Dodgers","Los Angeles","#4C87C6"],
+  116:["DET","Tigers","Detroit","#F2F0E6"],       117:["HOU","Astros","Houston","#EB6E1F"],
+  118:["KC","Royals","Kansas City","#2E74C4"],    119:["LAD","Dodgers","Los Angeles","#4C87C6"],
   120:["WSH","Nationals","Washington","#E4444A"], 121:["NYM","Mets","New York","#FF5910"],
-  133:["ATH","Athletics","","#EFB21E"],           134:["PIT","Pirates","Pittsburgh","#FDB827"],
+  133:["ATH","Athletics","","#EFB21E"],           134:["PIT","Pirates","Pittsburgh","#E0A106"],
   135:["SD","Padres","San Diego","#FFC425"],      136:["SEA","Mariners","Seattle","#2BA6A0"],
   137:["SF","Giants","San Francisco","#FD5A1E"],  138:["STL","Cardinals","St. Louis","#C41E3A"],
   139:["TB","Rays","Tampa Bay","#8FBCE6"],        140:["TEX","Rangers","Texas","#4A7FD1"],
-  141:["TOR","Blue Jays","Toronto","#3E7FD1"],    142:["MIN","Twins","Minnesota","#D31145"],
+  141:["TOR","Blue Jays","Toronto","#3E7FD1"],    142:["MIN","Twins","Minnesota","#E23E5C"],
   143:["PHI","Phillies","Philadelphia","#E81828"],144:["ATL","Braves","Atlanta","#CE1141"],
-  145:["CWS","White Sox","Chicago","#C4CED4"],    146:["MIA","Marlins","Miami","#00A3E0"],
+  145:["CWS","White Sox","Chicago","#A8B4BC"],    146:["MIA","Marlins","Miami","#00A3E0"],
   147:["NYY","Yankees","New York","#9AA7B1"],     158:["MIL","Brewers","Milwaukee","#FFC52F"]
 };
 const ab = id => (T[id] ? T[id][0] : "?");
@@ -1213,7 +1213,7 @@ function followStrip(){
     + '<div class="fhead">'
     + '<button class="fname" data-team="' + id + '">'
       + '<b>' + ab(id) + '</b><em>' + esc(city(id) + " " + nm(id)) + '</em></button>'
-    + '<span class="fpos">' + ord + ' ' + d.lg + ' ' + d.name + '</span>'
+    + '<span class="fpos">' + ord + ' ' + d[0] + ' ' + d[1] + '</span>'
     + '</div>'
     + '<div class="fstats">'
       + '<span><b>' + t.w + '\u2013' + t.l + '</b>record</span>'
