@@ -176,7 +176,8 @@ ul{margin:0;padding:0;list-style:none;}
   color:var(--slate);}
 .bpline em{font-style:normal;font-size:8.5px;letter-spacing:.14em;color:#738E93;
   margin-right:9px;}
-.bpline b{color:var(--chalk);font-weight:500;font-size:11.5px;}
+.bpline b{color:var(--slate);font-weight:500;font-size:11.5px;}
+.bpline b.up{color:var(--chalk);}
 .pills{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 0 12px;}
 .pills:not(:last-child){margin-bottom:10px;}
 .pill{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;
@@ -396,7 +397,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "28 — hitter last-5 from game logs";
+const BUILD = "30 — real schedule in the forecast";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -446,7 +447,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{standings:"AL", odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, hitterForm:{}, detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, hitterForm:{}, h2h:{}, remaining:null, detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, seed:0, simBusy:false,
   phase:"loading", err:null, at:null, sheet:null, swing:null, swingBusy:false
@@ -759,6 +760,43 @@ async function ensureHitterForm(){
   }
 }
 
+/* Season head-to-head. The four-day window the app normally keeps is no use
+   here, so this pulls every completed regular-season game once and reduces it
+   to a win count per pairing. No hydrate, so each game is small.
+
+   Keyed by the two club ids sorted, which makes the lookup independent of who
+   is at home in any given meeting. */
+const h2hKey = (a, b) => (a < b ? a + "-" + b : b + "-" + a);
+
+async function loadSeason(){
+  const yr = new Date().getFullYear();
+  const h2h = {}, remaining = [];
+  let j;
+  try{
+    j = await getJSON(MLB + "/schedule?sportId=1&gameType=R"
+      + "&startDate=" + yr + "-03-01&endDate=" + yr + "-10-05");
+  }catch(e){ return { h2h, remaining }; }
+  for(const day of j.dates || []){
+    for(const g of day.games || []){
+      const h = (g.teams || {}).home || {}, a = (g.teams || {}).away || {};
+      const hid = (h.team || {}).id, aid = (a.team || {}).id;
+      if(!T[hid] || !T[aid]) continue;
+      const st = (g.status || {}).abstractGameState;
+      const det = (g.status || {}).detailedState || "";
+      if(st === "Final"){
+        if(h.score == null || a.score == null || h.score === a.score) continue;
+        const k = h2hKey(hid, aid);
+        const rec = h2h[k] || (h2h[k] = {});
+        rec[h.score > a.score ? hid : aid] = (rec[h.score > a.score ? hid : aid] || 0) + 1;
+      } else if(!/postponed|cancel/i.test(det)){
+        // Anything not yet final is still to be played, including tonight's.
+        remaining.push({ hid, aid });
+      }
+    }
+  }
+  return { h2h, remaining };
+}
+
 /* Venue coordinates and roof type come from MLB, so no ballpark list is
    hardcoded here and venue changes are picked up automatically. */
 async function loadVenues(ids){
@@ -925,6 +963,20 @@ async function load(){
    them 750 rows deep — far and away the bulk of this app's traffic, and all of
    it for content that stays folded away until asked for. So it is fetched on
    the first expand, once per session, and rendered as each piece lands. */
+/* The season fetch serves two masters: head-to-head records on the cards, and
+   the real fixture list the forecast needs. Either tab may ask for it first,
+   so it lives behind one guard and recomputes the odds once it lands. */
+async function ensureSeason(){
+  if(S.remaining) return;
+  const season = await loadSeason();
+  S.h2h = season.h2h;
+  S.remaining = season.remaining;
+  S.diag.h2h = Object.keys(S.h2h).length;
+  S.diag.remaining = season.remaining.length;
+  if(season.remaining.length > 100) S.odds = simulate(SIMS);   // now schedule-aware
+  render();
+}
+
 async function loadDetail(){
   if(S.detailState === "loading" || S.detailState === "ready") return;
   S.detailState = "loading";
@@ -946,6 +998,8 @@ async function loadDetail(){
   }
   S.diag.bullpens = Object.keys(S.bullpens).length;
 
+  await ensureSeason();
+
   if(!Object.keys(S.hitters).length){ S.hitters = await loadHitters(); render(); }
   S.diag.hitters = Object.values(S.hitters).reduce((n,a) => n + a.length, 0);
 
@@ -958,14 +1012,34 @@ async function loadDetail(){
 
 function simulate(sims, tweak){
   const clubs = list();
-  const rate = {}, base = {}, rem = {};
+  const rate = {}, base = {}, rem = {}, lg10 = {};
   for(const t of clubs){
     const gp = t.w + t.l;
-    rate[t.id] = (t.w + REGRESS/2) / (gp + REGRESS);
+    const p = (t.w + REGRESS/2) / (gp + REGRESS);
+    rate[t.id] = p;
+    lg10[t.id] = Math.log(p / (1 - p));            // log-odds, for head to head
     const bump = tweak && tweak.id === t.id;
     base[t.id] = t.w + (bump ? tweak.add : 0);
     rem[t.id] = Math.max(0, left(t) - (bump ? 1 : 0));
   }
+
+  /* With the real fixture list, each remaining game is played between the two
+     clubs actually involved, with a home edge — so a hard September counts
+     against you and an easy one does not. Without it, every club plays a
+     generic average opponent, which is the fallback. */
+  const sched = S.remaining;
+  const useSched = Array.isArray(sched) && sched.length > 100;
+  let pre = null, skip = -1;
+  if(useSched){
+    if(tweak){
+      skip = sched.findIndex(g => g.hid === tweak.id || g.aid === tweak.id);
+    }
+    pre = sched.map(g => ({
+      hid:g.hid, aid:g.aid,
+      p:1 / (1 + Math.exp(-(lg10[g.hid] - lg10[g.aid] + HFA)))
+    }));
+  }
+
   const div = {}, berth = {}, top = {}, tot = {}, hist = {};
   for(const t of clubs){
     div[t.id]=0; berth[t.id]=0; top[t.id]=0; tot[t.id]=0;
@@ -975,11 +1049,21 @@ function simulate(sims, tweak){
   const wins = {}, key = {};
 
   for(let s = 0; s < sims; s++){
-    for(const t of clubs){
-      let w = base[t.id];
-      const p = rate[t.id], n = rem[t.id];
-      for(let g = 0; g < n; g++) if(Math.random() < p) w++;
-      wins[t.id] = w; tot[t.id] += w; hist[t.id][w]++;
+    if(pre){
+      for(const t of clubs) wins[t.id] = base[t.id];
+      for(let i = 0; i < pre.length; i++){
+        if(i === skip) continue;                   // the game the tweak fixes
+        const g = pre[i];
+        if(Math.random() < g.p) wins[g.hid]++; else wins[g.aid]++;
+      }
+      for(const t of clubs){ tot[t.id] += wins[t.id]; hist[t.id][wins[t.id]]++; }
+    } else {
+      for(const t of clubs){
+        let w = base[t.id];
+        const p = rate[t.id], n = rem[t.id];
+        for(let g = 0; g < n; g++) if(Math.random() < p) w++;
+        wins[t.id] = w; tot[t.id] += w; hist[t.id][w]++;
+      }
     }
     for(const lg of ["AL","NL"]){
       const pool = leagues[lg];
@@ -1312,10 +1396,21 @@ function starters(g){
   };
   const a = bp(g.aid), h = bp(g.hid);
   const lgTxt = S.bpLg != null ? ' \u00b7 lg ' + S.bpLg.toFixed(2) : "";
+
+  // Season series so far, if these two have met.
+  const rec = S.h2h[h2hKey(g.hid, g.aid)];
+  const hw = rec ? (rec[g.hid] || 0) : 0, aw = rec ? (rec[g.aid] || 0) : 0;
+  const h2h = (hw + aw) > 0
+    ? '<div class="bpline"><em>season series</em>'
+      + ab(g.aid) + ' <b class="' + (aw > hw ? "up" : "") + '">' + aw + '</b>'
+      + ' \u00b7 ' + ab(g.hid) + ' <b class="' + (hw > aw ? "up" : "") + '">' + hw + '</b>'
+      + (hw === aw ? ' \u00b7 level' : "") + '</div>'
+    : "";
   return '<div class="pblock"><h5 class="plabel">Starters</h5>'
     + pitcherLine(g.aid, g.aProbId, g.aProb)
     + pitcherLine(g.hid, g.hProbId, g.hProb)
     + (a && h ? '<div class="bpline"><em>bullpen era</em>' + a + ' \u00b7 ' + h + lgTxt + '</div>' : "")
+    + h2h
     + '</div>';
 }
 
@@ -1826,11 +1921,17 @@ function renderOdds(){
     + '<p>Each club plays out its remaining games at its own winning percentage, pulled toward .500 '
     + 'by ' + REGRESS + ' games so a hot stretch does not run away with the forecast. Three division '
     + 'winners and three wild cards per league; ties are coin flips.</p>'
+    + '<p>' + (S.remaining && S.remaining.length > 100
+        ? 'The remaining ' + S.remaining.length.toLocaleString() + ' games are played out '
+          + 'on the real fixture list, each between the two clubs actually involved with a '
+          + 'home edge — so a hard September counts against a club and an easy one does not.'
+        : 'Strength of schedule is not in yet: until the fixture list loads, every club '
+          + 'plays a generic average opponent. Open this tab again in a moment.') + '</p>'
     + '<p>The Wins column is the middle 80% of those simulated seasons — the tenth to '
     + 'ninetieth percentile — rather than a single average, because the average hides how '
     + 'wide the real spread still is. Tap a club for the full band and its median.</p>'
-    + '<p class="caveat">Not in the model: strength of schedule, run differential, injuries, trades '
-    + 'or home-field advantage. Read gaps of a few points as noise.</p>'
+    + '<p class="caveat">Still not in the model: run differential, injuries and trades. '
+    + 'Read gaps of a few points as noise.</p>'
     + '<div class="mrow"><span>' + SIMS.toLocaleString() + ' seasons</span>'
     + '<button class="btn" id="rerun"' + (S.simBusy?" disabled":"") + '>'
     + (S.simBusy ? "Simulating…" : "Run it again") + '</button></div></div></div>';
@@ -1964,7 +2065,7 @@ function render(resetScroll){
     + 'Odds simulated in this browser from the records above.<br>'
     + 'Build ' + BUILD
     + (Object.keys(S.diag).length
-        ? '<br>Loaded: ' + ["pitchers","form","bullpens","hitters","hitterForm"]
+        ? '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","hitters","hitterForm"]
             .filter(k => S.diag[k] != null)
             .map(k => k + ' ' + S.diag[k]).join(' \u00b7 ')
         : "")
@@ -2001,7 +2102,12 @@ function announce(){
 
 document.addEventListener("click", e => {
   const tab = e.target.closest("[data-tab]");
-  if(tab){ S.tab = tab.dataset.tab; render(true); return; }
+  if(tab){
+    S.tab = tab.dataset.tab;
+    if(S.tab === "odds") ensureSeason();   // the forecast wants the real fixture list
+    render(true);
+    return;
+  }
 
   const lg = e.target.closest("[data-lg]");
   if(lg){ const [view,k] = lg.dataset.lg.split(":"); S.lg[view] = k; render(true); return; }
