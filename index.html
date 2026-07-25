@@ -167,8 +167,8 @@ ul{margin:0;padding:0;list-style:none;}
   letter-spacing:.06em;text-transform:uppercase;color:#738E93;}
 .formline em{font-style:normal;font-size:8.5px;letter-spacing:.14em;color:#738E93;
   margin-right:8px;}
-.formline b{color:var(--chalk);font-weight:500;font-size:11px;}
 .formline.sub{margin:3px 0 8px 12px;}
+.formline b{color:var(--chalk);font-weight:500;font-size:11px;}
 .pblock.waiting{font-family:var(--mono);font-size:10px;letter-spacing:.1em;
   text-transform:uppercase;color:#738E93;text-align:center;padding:16px 10px;}
 .bpline{margin-top:10px;padding-top:9px;border-top:1px solid var(--line);
@@ -396,7 +396,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "27 — innings notation, byDateRange retry";
+const BUILD = "28 — hitter last-5 from game logs";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -446,7 +446,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{standings:"AL", odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, recent:{}, detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, hitterForm:{}, detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, seed:0, simBusy:false,
   phase:"loading", err:null, at:null, sheet:null, swing:null, swingBusy:false
@@ -700,92 +700,63 @@ async function loadPitcherForm(ids){
   return filled;
 }
 
-/* Recent hitting, as a date window rather than a game count. True last-five
-   would need a game log per player, and the power blocks cover up to 150
-   hitters — tens of megabytes. A fortnight is one request, and it is labelled
-   in days so it never claims to be something it is not. */
-const FORM_DAYS = 14;
-async function loadRecentHitting(){
-  const out = {};
-  const yr = new Date().getFullYear();
-  const from = iso(shiftDays(-FORM_DAYS)), to = iso(new Date());
-  let j;
-  try{
-    j = await getJSON(MLB + "/stats?stats=byDateRange&group=hitting&season=" + yr
-      + "&sportId=1&startDate=" + from + "&endDate=" + to + "&limit=1000");
-  }catch(e){ return out; }
-  const splits = (j.stats && j.stats[0] && j.stats[0].splits) || [];
-  for(const s of splits){
-    const pid = (s.player || {}).id, st = s.stat || {};
-    if(!pid) continue;
-    const pa = Number(st.plateAppearances) || 0;
-    if(pa < 15) continue;                      // too little to be worth showing
-    out[pid] = { hr:Number(st.homeRuns) || 0, pa,
-                 avg:st.avg && st.avg !== "-" ? st.avg : null,
-                 ops:st.ops && st.ops !== "-" ? st.ops : null,
-                 g:Number(st.gamesPlayed) || null };
-  }
-  return out;
-}
-/* Every regular's season hitting line in one request, sorted by home runs,
-   then grouped by club. A 100 plate-appearance floor keeps a callup with two
-   homers in nine games out of the leaders. The limit is generous because the
-   list is league-wide: a light-hitting club's fifth-best bat can sit several
-   hundred names down. */
-async function loadHitters(){
-  const byTeam = {};
+/* Hitter form from actual game logs — the same mechanism that works for
+   pitchers, which is why it is trustworthy where the date-range attempt was
+   not. The cost is that logs are per player, so this is fetched only for the
+   bats on cards you have actually opened, in batches, and never twice.
+
+   A null entry means "asked for, nothing came back", which stops a player
+   with no log from being requested on every render. */
+async function loadHitterLogs(ids){
+  if(!ids.length) return 0;
   const yr = new Date().getFullYear();
   let j;
   try{
-    j = await getJSON(MLB + "/stats?stats=season&group=hitting&season=" + yr
-      + "&sportId=1&sortStat=homeRuns&order=desc&limit=750");
-  }catch(e){ return byTeam; }
-  const splits = (j.stats && j.stats[0] && j.stats[0].splits) || [];
-  for(const s of splits){
-    const tid = (s.team || {}).id, st = s.stat || {};
-    if(!T[tid]) continue;
-    const hr = st.homeRuns, pa = st.plateAppearances;
-    if(!hr || hr <= 0 || !pa || pa < 100) continue;
-    (byTeam[tid] = byTeam[tid] || []).push({
-      id:(s.player || {}).id,
-      name:(s.player || {}).fullName || "—", hr, pa, perPA:pa / hr
-    });
+    j = await getJSON(MLB + "/people?personIds=" + ids.join(",")
+      + "&hydrate=stats(group=hitting,type=gameLog,season=" + yr + ")");
+  }catch(e){ return 0; }
+  let filled = 0;
+  for(const p of j.people || []){
+    const grp = (p.stats || []).find(s => Array.isArray(s.splits) && s.splits.length);
+    if(!grp) continue;
+    const last = grp.splits.slice(-5);
+    if(!last.length) continue;
+    let hr = 0, ab = 0, h = 0, rbi = 0;
+    for(const sp of last){
+      const st = sp.stat || {};
+      hr += Number(st.homeRuns) || 0;
+      ab += Number(st.atBats) || 0;
+      h += Number(st.hits) || 0;
+      rbi += Number(st.rbi) || 0;
+    }
+    S.hitterForm[p.id] = { g:last.length, hr, ab, h, rbi,
+                           avg:ab > 0 ? h / ab : null };
+    filled++;
   }
-  for(const k in byTeam) byTeam[k] = byTeam[k].sort((a, b) => b.hr - a.hr).slice(0, 5);
-  return byTeam;
+  return filled;
 }
 
-/* Bullpen strength, built from player lines rather than a team total, because
-   MLB's team pitching figures fold the starters in. A "reliever" here is a
-   pitcher with zero starts — unambiguous, at the cost of excluding swingmen,
-   whose innings get left out of both clubs equally. The league average is
-   computed from the same pass rather than assumed. */
-async function loadBullpens(){
-  const yr = new Date().getFullYear();
-  let j;
-  try{
-    j = await getJSON(MLB + "/stats?stats=season&group=pitching&season=" + yr
-      + "&sportId=1&sortStat=inningsPitched&order=desc&limit=1200");
-  }catch(e){ return { teams:{}, lg:null }; }
-  const splits = (j.stats && j.stats[0] && j.stats[0].splits) || [];
-  const acc = {};
-  let lgER = 0, lgIP = 0;
-  for(const s of splits){
-    const tid = (s.team || {}).id, st = s.stat || {};
-    if(!T[tid]) continue;
-    if(st.gamesStarted == null || Number(st.gamesStarted) !== 0) continue;
-    const ip = inningsOf(st.inningsPitched), er = Number(st.earnedRuns);
-    if(!ip || ip <= 0 || isNaN(er)) continue;
-    const a = acc[tid] || (acc[tid] = { ip:0, er:0 });
-    a.ip += ip; a.er += er;
-    lgER += er; lgIP += ip;
+/* The bats on every card currently open, deduped. */
+function openCardHitterIds(){
+  const ids = [];
+  for(const g of S.games){
+    if(!S.open[g.pk]) continue;
+    for(const tid of [g.aid, g.hid])
+      for(const b of (S.hitters[tid] || []).slice(0, 5)) if(b.id) ids.push(b.id);
   }
-  const teams = {};
-  for(const k in acc){
-    if(acc[k].ip < BP_MIN_IP) continue;
-    teams[k] = { era:9 * acc[k].er / acc[k].ip, ip:acc[k].ip };
+  return [...new Set(ids)];
+}
+
+async function ensureHitterForm(){
+  const need = openCardHitterIds().filter(id => !(id in S.hitterForm));
+  if(!need.length) return;
+  need.forEach(id => { S.hitterForm[id] = null; });   // claim them, so no refetch
+  const CHUNK = 40;
+  for(let i = 0; i < need.length; i += CHUNK){
+    await loadHitterLogs(need.slice(i, i + CHUNK));
+    S.diag.hitterForm = Object.values(S.hitterForm).filter(Boolean).length;
+    render();
   }
-  return { teams, lg:lgIP > 0 ? 9 * lgER / lgIP : null };
 }
 
 /* Venue coordinates and roof type come from MLB, so no ballpark list is
@@ -978,11 +949,9 @@ async function loadDetail(){
   if(!Object.keys(S.hitters).length){ S.hitters = await loadHitters(); render(); }
   S.diag.hitters = Object.values(S.hitters).reduce((n,a) => n + a.length, 0);
 
-  if(!Object.keys(S.recent).length){ S.recent = await loadRecentHitting(); }
-  S.diag.recent = Object.keys(S.recent).length;
-
   S.detailState = "ready";
   render();
+  ensureHitterForm();
 }
 
 /* ============================== forecast ============================= */
@@ -1135,11 +1104,12 @@ function powerBlock(g){
       + '<span class="clubab">' + ab(teamId) + '</span>'
       + '<span class="facing">' + facing + '</span></div>'
       + bats.map(b => {
-        const r = S.recent[b.id];
-        const sub = r
-          ? '<div class="formline sub"><em>last ' + FORM_DAYS + 'd</em>'
-            + '<b>' + r.hr + '</b> HR in ' + r.pa + ' PA'
-            + (r.avg ? ' · ' + r.avg : "") + (r.ops ? ' · ' + r.ops + ' OPS' : "") + '</div>'
+        const f = S.hitterForm[b.id];
+        const sub = f
+          ? '<div class="formline sub"><em>last ' + f.g + 'G</em>'
+            + '<b>' + f.hr + '</b> HR · ' + f.h + ' for ' + f.ab
+            + (f.avg != null ? ' · ' + f.avg.toFixed(3).replace(/^0/, "") : "")
+            + (f.rbi ? ' · ' + f.rbi + ' RBI' : "") + '</div>'
           : "";
         return '<div class="mlrow">'
           + '<span class="bdash" aria-hidden="true"></span>'
@@ -1669,12 +1639,10 @@ function renderToday(){
     + 'multiplied them into a single "chance of a homer tonight", because every weight in '
     + 'that multiplication would be invented and the answer would look far more precise '
     + 'than it could possibly be.</p>'
-    + '<p class="note">Recent form is measured two different ways, deliberately. A '
-    + 'starter\'s last three outings come from his actual game log, so that is exact. A '
-    + 'hitter\'s is the last ' + FORM_DAYS + ' days, not his last five games — true '
-    + 'game-by-game numbers for every hitter on the slate would be a far larger download '
-    + 'than the rest of this app combined, and a fortnight answers the same question. It '
-    + 'is labelled in days so it never pretends to be a game count.</p>'
+    + '<p class="note">Recent form comes from actual game logs on both sides — a '
+    + 'starter\'s last three outings, a hitter\'s last five games. Those are exact, not '
+    + 'sampled from a date window. Logs are per player, so a card\'s hitters are fetched '
+    + 'when you open it and not before.</p>'
     + '<p class="note">One limitation worth knowing: MLB reports hitting stats against '
     + 'the club a player earned them with, so a mid-season trade can leave someone listed '
     + 'under a former team, or split across two. There is no roster check here to catch '
@@ -1996,7 +1964,7 @@ function render(resetScroll){
     + 'Odds simulated in this browser from the records above.<br>'
     + 'Build ' + BUILD
     + (Object.keys(S.diag).length
-        ? '<br>Loaded: ' + ["pitchers","form","bullpens","hitters","recent"]
+        ? '<br>Loaded: ' + ["pitchers","form","bullpens","hitters","hitterForm"]
             .filter(k => S.diag[k] != null)
             .map(k => k + ' ' + S.diag[k]).join(' \u00b7 ')
         : "")
@@ -2044,7 +2012,7 @@ document.addEventListener("click", e => {
   if(tog){
     const pk = tog.dataset.toggle;
     S.open[pk] = !S.open[pk];
-    if(S.open[pk]) loadDetail();     // first expand pulls the heavy data
+    if(S.open[pk]){ loadDetail(); ensureHitterForm(); }
     render();
     return;
   }
@@ -2068,7 +2036,7 @@ document.addEventListener("click", e => {
     const pks = S.games.filter(g => g.date === today && g.st === "sched").map(g => g.pk);
     const anyClosed = pks.some(p => !S.open[p]);
     pks.forEach(p => { S.open[p] = anyClosed; });
-    if(anyClosed) loadDetail();
+    if(anyClosed){ loadDetail(); ensureHitterForm(); }
     render();
     return;
   }
