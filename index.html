@@ -396,7 +396,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "26 — method notes folded away";
+const BUILD = "27 — innings notation, byDateRange retry";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -608,6 +608,16 @@ function inningsOf(ip){
   return w + thirds / 3;
 }
 
+/* And back again for display. 16.67 innings is written 16.2 in baseball —
+   sixteen and two thirds. Printing the decimal is accurate but reads wrong
+   to anyone who follows the sport. */
+function ipText(inn){
+  if(inn == null) return "—";
+  const whole = Math.floor(inn + 1e-9);
+  const thirds = Math.round((inn - whole) * 3);
+  return thirds === 3 ? (whole + 1) + ".0" : whole + "." + thirds;
+}
+
 /* Every starter on the slate in a single request. Rates come from MLB where
    it supplies them and are computed from the counting stats otherwise, so a
    field name changing upstream degrades to arithmetic rather than blanks.
@@ -702,8 +712,7 @@ async function loadRecentHitting(){
   let j;
   try{
     j = await getJSON(MLB + "/stats?stats=byDateRange&group=hitting&season=" + yr
-      + "&sportId=1&startDate=" + from + "&endDate=" + to
-      + "&sortStat=homeRuns&order=desc&limit=750");
+      + "&sportId=1&startDate=" + from + "&endDate=" + to + "&limit=1000");
   }catch(e){ return out; }
   const splits = (j.stats && j.stats[0] && j.stats[0].splits) || [];
   for(const s of splits){
@@ -1314,7 +1323,7 @@ function pitcherLine(teamId, pid, fallbackName){
   const f = p && p.form;
   const formLine = f
     ? '<div class="formline"><em>last ' + f.n + (f.n === 1 ? " start" : " starts") + '</em>'
-      + '<b>' + f.era.toFixed(2) + '</b> ERA · ' + f.ip.toFixed(1) + ' IP · '
+      + '<b>' + f.era.toFixed(2) + '</b> ERA · ' + ipText(f.ip) + ' IP · '
       + f.k + ' K · ' + f.bb + ' BB · ' + f.hr + ' HR</div>'
     : "";
   return '<div class="pline">'
