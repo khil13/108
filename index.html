@@ -187,6 +187,8 @@ ul{margin:0;padding:0;list-style:none;}
 .pill.hot b{color:var(--bulb);}
 
 /* weather strip */
+.serieslabel{font-family:var(--mono);font-size:9px;letter-spacing:.14em;
+  text-transform:uppercase;color:#738E93;margin:7px 0 -2px;}
 .wx{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 -4px 8px;
   padding:8px 10px;border-radius:3px;background:#0F2126;border:1px solid #1C3A40;}
 .wxtemp{font-family:var(--mono);font-weight:500;font-size:16px;color:var(--chalk);}
@@ -393,7 +395,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "24 — game logs in their own call, load diagnostics";
+const BUILD = "25 — series context";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -570,6 +572,8 @@ function readGames(json){
       const ls = g.linescore || {}, off = ls.offense || {};
       out.push({
         pk:g.gamePk, date:g.officialDate || day.date, st:statusOf(g),
+        sg:g.seriesGameNumber == null ? null : g.seriesGameNumber,
+        gis:g.gamesInSeries == null ? null : g.gamesInSeries,
         detail:(g.status||{}).detailedState || "", hid, aid,
         hs:h.score == null ? null : h.score, as:a.score == null ? null : a.score,
         start:g.gameDate, venueId:(g.venue||{}).id, venue:(g.venue||{}).name || "",
@@ -1192,6 +1196,40 @@ function inningText(g){
   return (h === "bottom" ? "Bot " : "Top ") + g.ord;
 }
 
+/* Baseball is played in series, not as isolated games. The schedule says which
+   game of how many this is; the earlier games in the same series are in the
+   window already, so who leads it can be counted rather than fetched.
+
+   Only games with a lower series number count, which keeps a doubleheader or
+   a second meeting later in the week from being folded in. */
+function seriesLine(g){
+  if(!g.sg || !g.gis || g.gis < 2) return "";
+  const samePair = x => (x.hid === g.hid && x.aid === g.aid)
+    || (x.hid === g.aid && x.aid === g.hid);
+  const prior = S.games.filter(x =>
+    samePair(x) && x.st === "final" && x.sg != null && x.sg < g.sg && x.pk !== g.pk);
+
+  let h = 0, a = 0;
+  for(const x of prior){
+    if(x.hs === x.as) continue;
+    const winner = x.hs > x.as ? x.hid : x.aid;
+    if(winner === g.hid) h++; else a++;
+  }
+
+  let txt = "Game " + g.sg + " of " + g.gis;
+  if(prior.length){
+    txt += h === a
+      ? " · series level " + h + "\u2013" + a
+      : " · " + ab(h > a ? g.hid : g.aid) + " lead "
+        + Math.max(h,a) + "\u2013" + Math.min(h,a);
+  } else if(g.sg === 1){
+    txt += " · opener";
+  } else if(g.sg === g.gis){
+    txt += " · finale";
+  }
+  return '<div class="serieslabel">' + txt + '</div>';
+}
+
 function stakes(g){
   const h = S.teams[g.hid], a = S.teams[g.aid];
   if(!h || !a) return null;
@@ -1361,6 +1399,7 @@ function gameCard(g){
 
   return '<article class="gcard"><header class="ghead">' + head + count
     + (tag ? '<span class="chip ' + tag[0] + '">' + tag[1] + '</span>' : "") + '</header>'
+    + seriesLine(g)
     + '<div class="matrix"><div class="mhead"><span></span><span>H</span><span>R</span></div>'
     + side(g.aid, g.as, g.aH, !blank && g.as > g.hs, blank, awayBats)
     + side(g.hid, g.hs, g.hH, !blank && g.hs > g.as, blank, homeBats)
