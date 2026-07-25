@@ -393,7 +393,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "23 — lazy loading";
+const BUILD = "24 — game logs in their own call, load diagnostics";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -443,7 +443,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{standings:"AL", odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, recent:{}, detailState:"idle", wxAt:null,
+  bullpens:{}, bpLg:null, recent:{}, detailState:"idle", wxAt:null, diag:{},
   follow:119, picker:false, baseline:null,
   odds:null, seed:0, simBusy:false,
   phase:"loading", err:null, at:null, sheet:null, swing:null, swingBusy:false
@@ -616,14 +616,11 @@ async function loadPitchers(ids){
   let j;
   try{
     j = await getJSON(MLB + "/people?personIds=" + ids.join(",")
-      + "&hydrate=stats(group=pitching,type=[season,gameLog],season=" + yr + ")");
+      + "&hydrate=stats(group=pitching,type=season,season=" + yr + ")");
   }catch(e){ return out; }
 
-  const pick = (p, type) => (p.stats || []).find(s =>
-    (s.type || {}).displayName === type && (s.group || {}).displayName === "pitching");
-
   for(const p of j.people || []){
-    const seasonGrp = pick(p, "season") || (p.stats || [])[0];
+    const seasonGrp = (p.stats || [])[0];
     const s = seasonGrp && seasonGrp.splits && seasonGrp.splits.length
       ? seasonGrp.splits[seasonGrp.splits.length - 1].stat : null;   // last split = current club
     const ip = s ? inningsOf(s.inningsPitched) : null;
@@ -632,28 +629,6 @@ async function loadPitchers(ids){
       if(ip && ip > 0 && count != null) return count * 9 / ip;
       return null;
     };
-
-    /* Recent form from the game log: the last three outings he actually
-       started. Relief appearances are skipped so the comparison is like for
-       like against the season line above it. */
-    let form = null;
-    const logGrp = pick(p, "gameLog");
-    if(logGrp && Array.isArray(logGrp.splits)){
-      const starts = logGrp.splits
-        .filter(sp => sp.stat && Number(sp.stat.gamesStarted) > 0)
-        .slice(-3);
-      if(starts.length){
-        let inn = 0, er = 0, k = 0, bb = 0, hr = 0;
-        for(const sp of starts){
-          inn += inningsOf(sp.stat.inningsPitched) || 0;
-          er += Number(sp.stat.earnedRuns) || 0;
-          k += Number(sp.stat.strikeOuts) || 0;
-          bb += Number(sp.stat.baseOnBalls) || 0;
-          hr += Number(sp.stat.homeRuns) || 0;
-        }
-        if(inn > 0) form = { n:starts.length, ip:inn, era:9 * er / inn, k, bb, hr };
-      }
-    }
 
     out[p.id] = {
       id:p.id,
@@ -667,10 +642,47 @@ async function loadPitchers(ids){
       hr9:s ? per9(s.homeRuns, s.homeRunsPer9) : null,
       bb9:s ? per9(s.baseOnBalls, s.walksPer9Inn) : null,
       oppAvg:s && s.avg != null && s.avg !== "-" ? s.avg : null,
-      form
+      form:null
     };
   }
   return out;
+}
+
+/* Game logs in their own request. The combined array hydrate,
+   type=[season,gameLog], returned season stats only — so this uses the plain
+   single-type form that is known to work, at the cost of one more call. */
+async function loadPitcherForm(ids){
+  if(!ids.length) return 0;
+  const yr = new Date().getFullYear();
+  let j;
+  try{
+    j = await getJSON(MLB + "/people?personIds=" + ids.join(",")
+      + "&hydrate=stats(group=pitching,type=gameLog,season=" + yr + ")");
+  }catch(e){ return 0; }
+  let filled = 0;
+  for(const p of j.people || []){
+    const rec = S.pitchers[p.id];
+    if(!rec) continue;
+    const grp = (p.stats || []).find(s => Array.isArray(s.splits) && s.splits.length);
+    if(!grp) continue;
+    // Starts only, so the comparison is like for like against the season line.
+    let starts = grp.splits.filter(sp => sp.stat && Number(sp.stat.gamesStarted) > 0);
+    if(!starts.length) starts = grp.splits;      // a reliever opening: use appearances
+    const last = starts.slice(-3);
+    let inn = 0, er = 0, k = 0, bb = 0, hr = 0;
+    for(const sp of last){
+      inn += inningsOf(sp.stat.inningsPitched) || 0;
+      er += Number(sp.stat.earnedRuns) || 0;
+      k += Number(sp.stat.strikeOuts) || 0;
+      bb += Number(sp.stat.baseOnBalls) || 0;
+      hr += Number(sp.stat.homeRuns) || 0;
+    }
+    if(inn > 0){
+      rec.form = { n:last.length, ip:inn, era:9 * er / inn, k, bb, hr };
+      filled++;
+    }
+  }
+  return filled;
 }
 
 /* Recent hitting, as a date window rather than a game count. True last-five
@@ -933,17 +945,27 @@ async function loadDetail(){
   S.detailState = "loading";
   render();
 
-  if(!Object.keys(S.pitchers).length){
-    const pids = [...new Set(S.games
-      .flatMap(g => [g.hProbId, g.aProbId, g.pitcherId]).filter(Boolean))];
-    if(pids.length){ S.pitchers = await loadPitchers(pids); render(); }
+  const pids = [...new Set(S.games
+    .flatMap(g => [g.hProbId, g.aProbId, g.pitcherId]).filter(Boolean))];
+
+  if(!Object.keys(S.pitchers).length && pids.length){
+    S.pitchers = await loadPitchers(pids); render();
   }
+  S.diag.pitchers = Object.keys(S.pitchers).length;
+
+  if(pids.length){ S.diag.form = await loadPitcherForm(pids); render(); }
+
   if(!Object.keys(S.bullpens).length){
     const bp = await loadBullpens();
     S.bullpens = bp.teams; S.bpLg = bp.lg; render();
   }
+  S.diag.bullpens = Object.keys(S.bullpens).length;
+
   if(!Object.keys(S.hitters).length){ S.hitters = await loadHitters(); render(); }
+  S.diag.hitters = Object.values(S.hitters).reduce((n,a) => n + a.length, 0);
+
   if(!Object.keys(S.recent).length){ S.recent = await loadRecentHitting(); }
+  S.diag.recent = Object.keys(S.recent).length;
 
   S.detailState = "ready";
   render();
@@ -1920,7 +1942,13 @@ function render(resetScroll){
     + '<footer class="foot">108 — the number of double stitches on a regulation baseball.<br>'
     + 'Scores, records and venues from the MLB Stats API. Weather from Open-Meteo. '
     + 'Odds simulated in this browser from the records above.<br>'
-    + 'Build ' + BUILD + '</footer>'
+    + 'Build ' + BUILD
+    + (Object.keys(S.diag).length
+        ? '<br>Loaded: ' + ["pitchers","form","bullpens","hitters","recent"]
+            .filter(k => S.diag[k] != null)
+            .map(k => k + ' ' + S.diag[k]).join(' \u00b7 ')
+        : "")
+    + '</footer>'
     + (S.sheet ? renderSheet() : "");
 
   if(keep) window.scrollTo(0, keep);
