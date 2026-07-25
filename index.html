@@ -1,0 +1,930 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0D1A1D">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="108">
+<meta name="description" content="108 — baseball by the numbers. Live scores, standings, weather and October odds.">
+<title>108 — Baseball by the numbers</title>
+
+<!--
+  108 — Baseball by the numbers
+  No frameworks, no build step, no bundler, no API keys.
+
+  Data sources, both keyless and both CORS-enabled:
+    MLB Stats API   statsapi.mlb.com        scores, standings, venues
+    Open-Meteo      api.open-meteo.com      temperature and wind
+
+  Measured vs modelled is kept strictly separate. Scores, records and
+  weather are fetched. The October odds are simulated in your browser
+  and the method is stated in full on the Odds tab.
+-->
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+:root{
+  --night:#0D1A1D; --deep:#122428; --panel:#162C30; --line:#22434A;
+  --chalk:#F2F0E6; --slate:#7D989C; --bulb:#F5B841; --seam:#C8102E;
+  --grass:#5FCB8B; --blush:#F5919F;
+  --display:'Anton',Impact,sans-serif;
+  --body:'Archivo',system-ui,-apple-system,sans-serif;
+  --mono:'DM Mono',ui-monospace,SFMono-Regular,monospace;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{background:var(--night);color:var(--chalk);font-family:var(--body);
+  -webkit-font-smoothing:antialiased;min-height:100vh;}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;}
+button:focus-visible{outline:2px solid var(--bulb);outline-offset:2px;border-radius:3px;}
+button:disabled{cursor:default;}
+h1,h2,h3,h4{margin:0;font-weight:400;}
+p{margin:0;}
+ul{margin:0;padding:0;list-style:none;}
+
+/* masthead */
+.mast{position:sticky;top:0;z-index:20;background:rgba(13,26,29,.94);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+  padding-top:env(safe-area-inset-top);}
+.mtop{display:flex;align-items:center;gap:11px;padding:14px 18px 10px;}
+.wordmark{font-family:var(--display);font-size:30px;letter-spacing:.02em;line-height:1;}
+.tagline{font-family:var(--mono);font-size:9.5px;letter-spacing:.22em;
+  text-transform:uppercase;color:var(--slate);margin-top:3px;}
+.feed{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:3px;}
+.feedrow{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--slate);}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--slate);display:block;}
+.dot.ok{background:var(--grass);}
+.dot.live{background:var(--seam);animation:pulse 1.9s ease-in-out infinite;}
+.dot.bad{background:var(--bulb);}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.35;transform:scale(.78);}}
+.refresh{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:#5A757A;}
+.refresh:hover{color:var(--bulb);}
+.tabs{display:flex;gap:2px;padding:0 12px;overflow-x:auto;scrollbar-width:none;}
+.tabs::-webkit-scrollbar{display:none;}
+.tabs button{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--slate);padding:11px 13px;white-space:nowrap;
+  border-bottom:2px solid transparent;transition:color .18s;}
+.tabs button[aria-selected="true"]{color:var(--chalk);border-bottom-color:var(--seam);}
+
+.banner{padding:11px 18px;background:#241D0D;border-bottom:1px solid #4A3A16;
+  font-size:12.5px;line-height:1.55;color:#E3C98A;}
+.banner b{color:var(--bulb);font-weight:600;}
+
+.pane{padding:18px 14px 64px;max-width:820px;margin:0 auto;}
+.eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--slate);margin:26px 4px 10px;}
+.eyebrow.tight{margin:0 0 3px;}
+.ledger{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:4px;overflow:hidden;}
+.ledger div{background:var(--deep);padding:13px 12px;}
+.ledger b{display:block;font-family:var(--display);font-size:27px;line-height:1;color:var(--bulb);}
+.ledger span{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--slate);display:block;margin-top:5px;}
+.chip{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+  padding:3px 7px;border-radius:2px;border:1px solid;white-space:nowrap;}
+.chip.seam{color:var(--blush);border-color:#5E2029;background:#2A1418;}
+.chip.bulb{color:var(--bulb);border-color:#4A3A16;background:#241D0D;}
+.chip.slate{color:var(--slate);border-color:var(--line);}
+.seamrule{display:block;width:100%;height:14px;margin:30px 0 6px;opacity:.85;}
+.note{font-size:12px;line-height:1.6;color:var(--slate);margin-top:18px;padding:0 4px;}
+.toggle{display:flex;gap:1px;background:var(--line);border:1px solid var(--line);
+  border-radius:4px;overflow:hidden;margin:18px 0 4px;}
+.toggle button{flex:1;background:var(--night);padding:9px;font-family:var(--mono);
+  font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--slate);}
+.toggle button.on{background:var(--panel);color:var(--chalk);}
+
+/* game cards */
+.grid{display:grid;gap:10px;grid-template-columns:1fr;}
+@media(min-width:660px){.grid{grid-template-columns:1fr 1fr;}}
+.gcard{background:var(--deep);border:1px solid var(--line);border-radius:5px;padding:11px 13px 9px;}
+.ghead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:20px;}
+.glabel{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--slate);}
+.glabel.warn{color:var(--bulb);}
+.livetag{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--blush);}
+.count{display:flex;align-items:center;gap:7px;margin-left:auto;}
+.bs{font-family:var(--mono);font-size:11px;}
+.outs{display:flex;gap:3px;}
+.outs i{width:5px;height:5px;border-radius:50%;border:1px solid #3A5A60;display:block;}
+.outs i.on{background:var(--seam);border-color:var(--seam);}
+.matrix{margin:9px -4px 8px;padding:5px 4px 7px;border-radius:3px;
+  background:radial-gradient(rgba(245,184,65,.055) .7px,transparent .8px) 0 0/5px 5px,#0B1618;}
+.mhead{display:grid;grid-template-columns:3px 46px 1fr auto 24px 44px;gap:8px;
+  padding:2px 8px 3px;font-family:var(--mono);font-size:8.5px;letter-spacing:.14em;color:#4C6469;}
+.mhead span:nth-child(2){grid-column:5;text-align:right;}
+.mhead span:nth-child(3){grid-column:6;text-align:right;}
+.srow{display:grid;grid-template-columns:3px 46px 1fr auto 24px 44px;gap:8px;
+  align-items:center;padding:4px 8px;}
+.tbar{width:3px;height:15px;border-radius:2px;display:block;}
+.sabbr{font-family:var(--display);font-size:17px;letter-spacing:.03em;color:var(--slate);
+  display:flex;align-items:center;gap:4px;}
+.atbat{width:4px;height:4px;border-radius:50%;background:var(--bulb);display:block;}
+.win .sabbr,.win .sname{color:var(--chalk);}
+.sname{font-size:12.5px;color:var(--slate);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.srec{font-family:var(--mono);font-size:10.5px;color:#5A757A;}
+.shits{font-family:var(--mono);font-size:11.5px;color:#6E8A8E;text-align:right;}
+.sruns{font-family:var(--mono);font-weight:500;font-size:25px;text-align:right;
+  color:#6E8A8E;line-height:1;}
+.win .sruns{color:var(--bulb);text-shadow:0 0 14px rgba(245,184,65,.4);}
+.livebar{display:flex;align-items:center;gap:11px;padding:2px 4px 8px;}
+.matchup{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:12px;}
+.matchup span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.matchup em{font-style:normal;font-family:var(--mono);font-size:9px;letter-spacing:.12em;
+  color:#5A757A;margin-right:6px;}
+.probs{display:flex;flex-direction:column;gap:2px;padding:0 4px 8px;font-size:12px;color:var(--slate);}
+.probs span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.probs em{font-style:normal;font-family:var(--mono);font-size:9px;letter-spacing:.1em;
+  color:#4C6469;margin-right:7px;}
+
+/* weather strip */
+.wx{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 -4px 8px;
+  padding:8px 10px;border-radius:3px;background:#0F2126;border:1px solid #1C3A40;}
+.wxtemp{font-family:var(--mono);font-weight:500;font-size:16px;color:var(--chalk);}
+.wxbit{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--slate);display:flex;align-items:center;gap:5px;}
+.wxbit b{color:var(--chalk);font-weight:500;}
+.arrow{display:block;width:15px;height:15px;flex:0 0 auto;}
+.arrow path{fill:var(--bulb);}
+.wxroof{margin-left:auto;font-family:var(--mono);font-size:9px;letter-spacing:.14em;
+  text-transform:uppercase;color:#5A757A;}
+.wxroof.shut{color:var(--bulb);}
+.gfoot{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:#5A757A;}
+.tlink{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--slate);white-space:nowrap;}
+.tlink:hover{color:var(--bulb);}
+
+/* tables */
+.dblock{margin-top:22px;}
+.dname{font-family:var(--display);font-size:19px;letter-spacing:.03em;
+  text-transform:uppercase;padding:0 4px 8px;}
+.thead,.trow{display:grid;grid-template-columns:16px 3px 1fr 46px 38px 32px 40px 56px;gap:8px;}
+.thead{padding:0 8px 6px;border-bottom:1px solid var(--line);font-family:var(--mono);
+  font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#5A757A;}
+.thead span:first-child{grid-column:3;}
+.trow{align-items:center;width:100%;text-align:left;padding:9px 8px;
+  border-bottom:1px solid rgba(34,67,74,.5);}
+.trow:hover{background:var(--deep);}
+.tpos{font-family:var(--mono);font-size:11px;color:#4C6469;}
+.tname{display:flex;flex-direction:column;gap:1px;min-width:0;}
+.tname b{font-family:var(--display);font-size:15px;font-weight:400;letter-spacing:.03em;}
+.tname em{font-style:normal;font-size:11px;color:var(--slate);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.tnum{font-family:var(--mono);font-size:12.5px;text-align:right;}
+.tnum.dim{color:var(--slate);}
+.tnum.sm{font-size:10.5px;}
+.pctcell{display:flex;align-items:center;gap:6px;}
+.minibar{flex:1;height:4px;background:#0B1618;border-radius:2px;overflow:hidden;}
+.minibar i{display:block;height:100%;border-radius:2px;}
+.pctcell em{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--slate);
+  width:22px;text-align:right;}
+.cutline{display:flex;align-items:center;gap:9px;padding:8px;}
+.cutline::before,.cutline::after{content:"";flex:1;height:1px;
+  background:repeating-linear-gradient(90deg,var(--chalk) 0 5px,transparent 5px 11px);opacity:.45;}
+.cutline span{font-family:var(--mono);font-size:8.5px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--slate);}
+.pthead,.prow{display:grid;grid-template-columns:32px 3px 1fr 46px 46px 44px;gap:8px;}
+.pthead span:first-child{grid-column:3;}
+.prow{align-items:center;width:100%;text-align:left;padding:9px 8px;
+  border-bottom:1px solid rgba(34,67,74,.5);}
+.prow:hover{background:var(--deep);}
+.pseed{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--bulb);
+  text-transform:uppercase;}
+.othead,.orow{display:grid;grid-template-columns:3px 1fr 56px 40px 36px 68px;gap:8px;}
+.othead span:first-child{grid-column:2;}
+.orow{align-items:center;width:100%;text-align:left;padding:10px 8px;
+  border-bottom:1px solid rgba(34,67,74,.5);}
+.orow:hover{background:var(--deep);}
+.obar{display:flex;align-items:center;gap:6px;height:14px;}
+.obar i{display:block;height:6px;border-radius:3px;flex:0 0 auto;max-width:42px;}
+.obar em{font-style:normal;font-family:var(--mono);font-size:12px;margin-left:auto;}
+
+.method{margin-top:26px;padding:15px;border:1px solid var(--line);border-radius:5px;background:var(--deep);}
+.method h4{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--bulb);margin-bottom:9px;}
+.method p{font-size:12.5px;line-height:1.65;color:var(--slate);}
+.method .caveat{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);color:#6A8388;}
+.mrow{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;
+  padding-top:12px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10px;
+  letter-spacing:.08em;color:#5A757A;}
+.btn{border:1px solid var(--line);border-radius:3px;padding:8px 13px;font-family:var(--mono);
+  font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--chalk);}
+.btn:hover:enabled{border-color:var(--bulb);color:var(--bulb);}
+.btn:disabled{color:#4C6469;}
+.btn.wide{width:100%;}
+
+/* sheet */
+.scrim{position:fixed;inset:0;background:rgba(6,13,15,.72);z-index:40;display:flex;
+  align-items:flex-end;justify-content:center;animation:fade .18s ease-out;}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.sheet{background:var(--night);border:1px solid var(--line);border-radius:12px 12px 0 0;
+  width:100%;max-width:560px;max-height:88vh;overflow-y:auto;padding:8px 16px 40px;
+  animation:rise .26s cubic-bezier(.2,.8,.3,1);}
+@keyframes rise{from{transform:translateY(22px)}to{transform:translateY(0)}}
+.shandle{width:38px;height:3px;border-radius:2px;background:var(--line);margin:5px auto 12px;}
+.shead{display:flex;align-items:flex-start;gap:12px;padding-bottom:14px;border-bottom:2px solid;}
+.shead h3{font-family:var(--display);font-size:26px;letter-spacing:.02em;
+  text-transform:uppercase;line-height:1.05;}
+.x{font-size:15px;color:var(--slate);margin-left:auto;padding:3px 5px;}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:4px;overflow:hidden;margin-top:11px;}
+.stats div{background:var(--deep);padding:11px;}
+.stats b{display:block;font-family:var(--mono);font-weight:500;font-size:19px;line-height:1;}
+.stats span{display:block;margin-top:5px;font-family:var(--mono);font-size:9px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--slate);}
+.swing{margin-top:14px;padding:13px;border:1px solid var(--line);border-radius:4px;background:var(--deep);}
+.swing p{font-size:12.5px;line-height:1.65;color:var(--slate);}
+.swing b{color:var(--bulb);font-weight:500;}
+.ssub{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--slate);margin:22px 0 6px;}
+.slist li{display:grid;grid-template-columns:20px 1fr 52px 78px;gap:9px;align-items:center;
+  padding:8px 2px;border-bottom:1px solid rgba(34,67,74,.5);font-size:13px;}
+.slist li.empty{display:block;color:var(--slate);font-size:12.5px;border:0;}
+.res{font-family:var(--display);font-size:14px;text-align:center;}
+.res.w{color:var(--grass);} .res.l{color:var(--blush);} .res.n{color:#4C6469;font-family:var(--mono);font-size:12px;}
+.opp{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.line{font-family:var(--mono);font-size:12.5px;color:var(--slate);text-align:right;}
+.when{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:#5A757A;text-align:right;}
+
+.foot{border-top:1px solid var(--line);padding:20px 18px calc(34px + env(safe-area-inset-bottom));
+  max-width:820px;margin:0 auto;font-family:var(--mono);font-size:10px;letter-spacing:.09em;
+  line-height:1.9;color:#4C6469;}
+.load{padding:60px 18px;text-align:center;font-family:var(--mono);font-size:11px;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--slate);}
+.empty{margin-top:22px;padding:18px;border:1px solid var(--line);border-radius:5px;background:var(--deep);}
+.empty h3{font-family:var(--display);font-size:17px;text-transform:uppercase;margin-bottom:8px;}
+.empty p{font-size:12.5px;line-height:1.65;color:var(--slate);}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+</style>
+</head>
+<body>
+<div id="app"><p class="load">Starting 108…</p></div>
+
+<script>
+"use strict";
+
+/* ============================== config ============================== */
+
+const MLB = "https://statsapi.mlb.com/api/v1";
+const WX  = "https://api.open-meteo.com/v1/forecast";
+const SEASON_GAMES = 162;
+const SIMS = 5000;
+const SHEET_SIMS = 1500;
+const REGRESS = 40;          // games of .500 folded into every record
+
+/* Team identity by MLB id. Ids are stable. Records, divisions, venues and
+   coordinates all arrive from the API — only names and colours live here,
+   and colours are brightened where the true primary is unreadable on dark. */
+const T = {
+  108:["LAA","Angels","Los Angeles","#BA0021"],   109:["AZ","D-backs","Arizona","#C2405A"],
+  110:["BAL","Orioles","Baltimore","#DF4601"],    111:["BOS","Red Sox","Boston","#BD3039"],
+  112:["CHC","Cubs","Chicago","#4E87D6"],         113:["CIN","Reds","Cincinnati","#D6203A"],
+  114:["CLE","Guardians","Cleveland","#E31937"],  115:["COL","Rockies","Colorado","#8E6FC7"],
+  116:["DET","Tigers","Detroit","#FA4616"],       117:["HOU","Astros","Houston","#EB6E1F"],
+  118:["KC","Royals","Kansas City","#4A7FD1"],    119:["LAD","Dodgers","Los Angeles","#4C87C6"],
+  120:["WSH","Nationals","Washington","#E4444A"], 121:["NYM","Mets","New York","#FF5910"],
+  133:["ATH","Athletics","","#EFB21E"],           134:["PIT","Pirates","Pittsburgh","#FDB827"],
+  135:["SD","Padres","San Diego","#FFC425"],      136:["SEA","Mariners","Seattle","#2BA6A0"],
+  137:["SF","Giants","San Francisco","#FD5A1E"],  138:["STL","Cardinals","St. Louis","#C41E3A"],
+  139:["TB","Rays","Tampa Bay","#8FBCE6"],        140:["TEX","Rangers","Texas","#4A7FD1"],
+  141:["TOR","Blue Jays","Toronto","#3E7FD1"],    142:["MIN","Twins","Minnesota","#D31145"],
+  143:["PHI","Phillies","Philadelphia","#E81828"],144:["ATL","Braves","Atlanta","#CE1141"],
+  145:["CWS","White Sox","Chicago","#C4CED4"],    146:["MIA","Marlins","Miami","#00A3E0"],
+  147:["NYY","Yankees","New York","#9AA7B1"],     158:["MIL","Brewers","Milwaukee","#FFC52F"]
+};
+const ab = id => (T[id] ? T[id][0] : "?");
+const nm = id => (T[id] ? T[id][1] : "Unknown");
+const city = id => (T[id] ? T[id][2] : "");
+const col = id => (T[id] ? T[id][3] : "#7D989C");
+
+const DIV = {200:["AL","West"],201:["AL","East"],202:["AL","Central"],
+             203:["NL","West"],204:["NL","East"],205:["NL","Central"]};
+const DIVS = {AL:[201,202,200], NL:[204,205,203]};
+
+/* ============================== state =============================== */
+
+const S = {
+  tab:"today", lg:{standings:"AL", odds:"NL"},
+  teams:null, games:[], venues:{}, wx:{},
+  odds:null, seed:0, simBusy:false,
+  phase:"loading", err:null, at:null, sheet:null, swing:null, swingBusy:false
+};
+
+/* ============================== helpers ============================= */
+
+const esc = s => String(s == null ? "" : s)
+  .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+const iso = d => d.toLocaleDateString("en-CA");
+const shift = n => { const d = new Date(); d.setDate(d.getDate()+n); return d; };
+const clock = t => new Date(t).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+const dayName = t => new Date(t).toLocaleDateString([], {weekday:"short"});
+const pct = t => (t.w+t.l ? t.w/(t.w+t.l) : 0);
+const fmt3 = x => x.toFixed(3).replace(/^0/,"");
+const pc = p => p > .995 ? ">99" : p < .005 ? "<1" : String(Math.round(p*100));
+const left = t => Math.max(0, SEASON_GAMES - t.w - t.l);
+const gbTo = (t,o) => { const n = (o.w-t.w+(t.l-o.l))/2; return n <= 0 ? 0 : n; };
+const gbText = n => n === 0 ? "—" : n % 1 === 0 ? String(n) : n.toFixed(1);
+
+const list = () => Object.values(S.teams || {});
+const inDiv = d => list().filter(t => t.div === d).sort((a,b) => pct(b)-pct(a));
+const inLg = lg => list().filter(t => DIV[t.div] && DIV[t.div][0] === lg).sort((a,b) => pct(b)-pct(a));
+
+function pictureOf(lg){
+  const leaders = DIVS[lg].map(d => inDiv(d)[0]).filter(Boolean);
+  const rest = inLg(lg).filter(t => !leaders.includes(t));
+  return { seeds: leaders.slice().sort((a,b) => pct(b)-pct(a)),
+           wilds: rest.slice(0,3), chasing: rest.slice(3) };
+}
+
+async function getJSON(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+/* ============================== fetching ============================ */
+
+function readStandings(json){
+  const out = {};
+  for(const rec of json.records || []){
+    const d = rec.division && rec.division.id;
+    for(const tr of rec.teamRecords || []){
+      const id = tr.team && tr.team.id;
+      if(!T[id] || !DIV[d]) continue;
+      const sp = (json => (tr.records && tr.records.splitRecords || []).find(s => s.type === json));
+      const pair = s => s ? s.wins + "-" + s.losses : null;
+      out[id] = { id, div:d, w:tr.wins, l:tr.losses,
+        gb:tr.gamesBack, streak:(tr.streak||{}).streakCode || null,
+        l10:pair(sp("lastTen")), home:pair(sp("home")), away:pair(sp("away")),
+        magic:tr.magicNumber, clinched:!!tr.clinched };
+    }
+  }
+  return out;
+}
+
+function statusOf(g){
+  const a = (g.status||{}).abstractGameState, d = (g.status||{}).detailedState || "";
+  if(/postponed|cancel|suspend/i.test(d)) return "off";
+  if(a === "Live") return "live";
+  if(a === "Final") return "final";
+  return "sched";
+}
+
+function readGames(json){
+  const out = [];
+  for(const day of json.dates || []){
+    for(const g of day.games || []){
+      const h = (g.teams||{}).home || {}, a = (g.teams||{}).away || {};
+      const hid = (h.team||{}).id, aid = (a.team||{}).id;
+      if(!T[hid] || !T[aid]) continue;
+      const ls = g.linescore || {}, off = ls.offense || {};
+      out.push({
+        pk:g.gamePk, date:g.officialDate || day.date, st:statusOf(g),
+        detail:(g.status||{}).detailedState || "", hid, aid,
+        hs:h.score == null ? null : h.score, as:a.score == null ? null : a.score,
+        start:g.gameDate, venueId:(g.venue||{}).id, venue:(g.venue||{}).name || "",
+        hProb:(h.probablePitcher||{}).fullName || null,
+        aProb:(a.probablePitcher||{}).fullName || null,
+        ord:ls.currentInningOrdinal || null, half:ls.inningState || null,
+        balls:ls.balls, strikes:ls.strikes, outs:ls.outs,
+        onBase:[!!off.first, !!off.second, !!off.third],
+        batter:(off.batter||{}).fullName || null,
+        pitcher:((ls.defense||{}).pitcher||{}).fullName || null,
+        hH:((ls.teams||{}).home||{}).hits, aH:((ls.teams||{}).away||{}).hits
+      });
+    }
+  }
+  return out;
+}
+
+/* Venue coordinates and roof type come from MLB, so no ballpark list is
+   hardcoded here and 2026 venue changes are picked up automatically. */
+async function loadVenues(ids){
+  const out = {};
+  try{
+    const j = await getJSON(MLB + "/venues?hydrate=location,fieldInfo&venueIds=" + ids.join(","));
+    for(const v of j.venues || []){
+      const c = ((v.location||{}).defaultCoordinates) || {};
+      out[v.id] = { id:v.id, name:v.name,
+        lat:c.latitude == null ? null : c.latitude,
+        lon:c.longitude == null ? null : c.longitude,
+        roof:((v.fieldInfo||{}).roofType) || null };
+    }
+  }catch(e){ /* weather simply stays absent */ }
+  return out;
+}
+
+/* One request covers every ballpark: Open-Meteo accepts comma-separated
+   coordinate lists and returns an array in the same order. */
+async function loadWeather(venues){
+  const parks = Object.values(venues).filter(v => v.lat != null && v.lon != null);
+  if(!parks.length) return {};
+  const url = WX
+    + "?latitude=" + parks.map(p => p.lat).join(",")
+    + "&longitude=" + parks.map(p => p.lon).join(",")
+    + "&hourly=temperature_2m,wind_speed_10m,wind_direction_10m,precipitation_probability"
+    + "&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=UTC&forecast_days=3";
+  let j;
+  try{ j = await getJSON(url); }catch(e){ return {}; }
+  const arr = Array.isArray(j) ? j : [j];
+  const out = {};
+  parks.forEach((p,i) => { if(arr[i] && arr[i].hourly) out[p.id] = arr[i].hourly; });
+  return out;
+}
+
+/** Conditions at first pitch: the forecast hour nearest the start time. */
+function wxAt(venueId, startISO){
+  const h = S.wx[venueId];
+  if(!h || !h.time || !startISO) return null;
+  const target = new Date(startISO).getTime();
+  let best = -1, gap = Infinity;
+  for(let i = 0; i < h.time.length; i++){
+    const d = Math.abs(new Date(h.time[i] + "Z").getTime() - target);
+    if(d < gap){ gap = d; best = i; }
+  }
+  if(best < 0 || gap > 3*3600*1000) return null;
+  return { temp:h.temperature_2m[best], wind:h.wind_speed_10m[best],
+           dir:h.wind_direction_10m[best], rain:(h.precipitation_probability||[])[best] };
+}
+
+const COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+const compass = deg => COMPASS[Math.round(((deg % 360) / 22.5)) % 16];
+
+async function load(){
+  const yr = new Date().getFullYear();
+  try{
+    const [st, sc] = await Promise.all([
+      getJSON(MLB + "/standings?leagueId=103,104&season=" + yr + "&standingsTypes=regularSeason"),
+      getJSON(MLB + "/schedule?sportId=1&startDate=" + iso(shift(-1)) + "&endDate=" + iso(shift(2))
+              + "&hydrate=team,linescore,probablePitcher")
+    ]);
+    const teams = readStandings(st);
+    if(Object.keys(teams).length < 20) throw new Error("standings incomplete");
+    S.teams = teams;
+    S.games = readGames(sc);
+    S.phase = "ready"; S.err = null; S.at = new Date();
+    S.odds = simulate(SIMS);
+    render();
+
+    // Venues then weather, each optional and neither blocking the scores.
+    const ids = [...new Set(S.games.map(g => g.venueId).filter(Boolean))];
+    if(ids.length){
+      S.venues = await loadVenues(ids);
+      render();
+      S.wx = await loadWeather(S.venues);
+      render();
+    }
+  }catch(e){
+    S.err = e.message;
+    if(S.phase !== "ready") S.phase = "error";
+    render();
+  }
+}
+
+/* ============================== forecast ============================= */
+
+function simulate(sims, tweak){
+  const clubs = list();
+  const rate = {}, base = {}, rem = {};
+  for(const t of clubs){
+    const gp = t.w + t.l;
+    rate[t.id] = (t.w + REGRESS/2) / (gp + REGRESS);
+    const bump = tweak && tweak.id === t.id;
+    base[t.id] = t.w + (bump ? tweak.add : 0);
+    rem[t.id] = Math.max(0, left(t) - (bump ? 1 : 0));
+  }
+  const div = {}, berth = {}, top = {}, tot = {};
+  for(const t of clubs){ div[t.id]=0; berth[t.id]=0; top[t.id]=0; tot[t.id]=0; }
+  const leagues = {AL:clubs.filter(t=>DIV[t.div][0]==="AL"), NL:clubs.filter(t=>DIV[t.div][0]==="NL")};
+  const wins = {}, key = {};
+
+  for(let s = 0; s < sims; s++){
+    for(const t of clubs){
+      let w = base[t.id];
+      const p = rate[t.id], n = rem[t.id];
+      for(let g = 0; g < n; g++) if(Math.random() < p) w++;
+      wins[t.id] = w; tot[t.id] += w;
+    }
+    for(const lg of ["AL","NL"]){
+      const pool = leagues[lg];
+      for(const t of pool) key[t.id] = wins[t.id] + Math.random()*0.5;  // coin-flip ties
+      const champs = [];
+      for(const d of DIVS[lg]){
+        let best = null;
+        for(const t of pool){ if(t.div !== d) continue;
+          if(!best || key[t.id] > key[best.id]) best = t; }
+        if(best){ champs.push(best); div[best.id]++; berth[best.id]++; }
+      }
+      const field = pool.filter(t => !champs.includes(t)).sort((a,b) => key[b.id]-key[a.id]);
+      for(let k = 0; k < 3 && k < field.length; k++) berth[field[k].id]++;
+      champs.sort((a,b) => key[b.id]-key[a.id]);
+      if(champs.length) top[champs[0].id]++;
+    }
+  }
+  const o = {};
+  for(const t of clubs) o[t.id] = { div:div[t.id]/sims, berth:berth[t.id]/sims,
+                                    top:top[t.id]/sims, projWins:tot[t.id]/sims };
+  return o;
+}
+
+/* ============================== rendering =========================== */
+
+const SEAM = '<svg class="seamrule" viewBox="0 0 320 14" preserveAspectRatio="none" aria-hidden="true">'
+  + '<path d="M0 9 C 80 -1, 240 -1, 320 9" stroke="#C8102E" stroke-width="1.6" fill="none" stroke-dasharray="1.5 5" stroke-linecap="round"/>'
+  + '<path d="M0 5 C 80 15, 240 15, 320 5" stroke="#C8102E" stroke-width="1.6" fill="none" stroke-dasharray="1.5 5" stroke-linecap="round"/></svg>';
+
+const BALL = '<svg width="30" height="30" viewBox="0 0 40 40" aria-hidden="true">'
+  + '<circle cx="20" cy="20" r="18.5" fill="#F2F0E6"/>'
+  + '<path d="M9 4.5 C16.5 13, 16.5 27, 9 35.5" stroke="#C8102E" stroke-width="1.7" fill="none" stroke-dasharray="1 3.4" stroke-linecap="round"/>'
+  + '<path d="M31 4.5 C23.5 13, 23.5 27, 31 35.5" stroke="#C8102E" stroke-width="1.7" fill="none" stroke-dasharray="1 3.4" stroke-linecap="round"/></svg>';
+
+/* Wind arrow points the way the wind is going, i.e. bearing + 180. */
+const windArrow = deg => '<svg class="arrow" viewBox="0 0 20 20" aria-hidden="true" '
+  + 'style="transform:rotate(' + (((deg||0)+180)%360) + 'deg)">'
+  + '<path d="M10 2 L14.5 12 L10 9.6 L5.5 12 Z"/></svg>';
+
+function diamond(on){
+  const b = [[0,-7.5,on[1]],[7.5,0,on[0]],[-7.5,0,on[2]]];
+  return '<svg width="30" height="30" viewBox="0 0 30 30" aria-label="Runners on base">'
+    + '<g transform="translate(15,16)">' + b.map(([x,y,f]) =>
+      '<rect x="' + (x-3.4) + '" y="' + (y-3.4) + '" width="6.8" height="6.8" transform="rotate(45 '
+      + x + ' ' + y + ')" fill="' + (f ? "#F5B841" : "none") + '" stroke="'
+      + (f ? "#F5B841" : "#3A5A60") + '" stroke-width="1.3"/>').join("")
+    + '</g></svg>';
+}
+
+function inningText(g){
+  if(!g.ord) return "Live";
+  const h = (g.half||"").toLowerCase();
+  if(h === "middle") return "Mid " + g.ord;
+  if(h === "end") return "End " + g.ord;
+  return (h === "bottom" ? "Bot " : "Top ") + g.ord;
+}
+
+function stakes(g){
+  const h = S.teams[g.hid], a = S.teams[g.aid];
+  if(!h || !a) return null;
+  if(h.div === a.div){
+    const lead = inDiv(h.div)[0];
+    if(lead && gbTo(h,lead) <= 4 && gbTo(a,lead) <= 4)
+      return ["seam", DIV[h.div][0] + " " + DIV[h.div][1] + " stakes"];
+    return ["slate","Division rival"];
+  }
+  if(pct(h) >= .54 && pct(a) >= .54) return ["bulb","Two contenders"];
+  return null;
+}
+
+function side(id, runs, hits, won, blank, batting){
+  const t = S.teams[id];
+  return '<div class="srow' + (won ? " win" : "") + '">'
+    + '<span class="tbar" style="background:' + col(id) + '"></span>'
+    + '<span class="sabbr">' + ab(id) + (batting ? '<i class="atbat"></i>' : "") + '</span>'
+    + '<span class="sname">' + esc(nm(id)) + '</span>'
+    + '<span class="srec">' + (t ? t.w + "–" + t.l : "") + '</span>'
+    + '<span class="shits">' + (hits == null ? "" : hits) + '</span>'
+    + '<span class="sruns">' + (blank ? "" : runs) + '</span></div>';
+}
+
+function weatherStrip(g){
+  const v = S.venues[g.venueId];
+  const roof = v && v.roof ? v.roof : null;
+  const shut = roof && /dome|indoor|closed/i.test(roof);
+  const w = wxAt(g.venueId, g.start);
+  if(!w && !roof) return "";
+  if(shut){
+    return '<div class="wx"><span class="wxbit">Roof closed — conditions held steady</span>'
+      + '<span class="wxroof shut">' + esc(roof) + '</span></div>';
+  }
+  if(!w) return "";
+  return '<div class="wx">'
+    + '<span class="wxtemp">' + Math.round(w.temp) + '°</span>'
+    + '<span class="wxbit">' + windArrow(w.dir) + '<b>' + Math.round(w.wind) + '</b> mph from '
+      + compass(w.dir) + '</span>'
+    + (w.rain != null && w.rain >= 25 ? '<span class="wxbit"><b>' + w.rain + '%</b> rain</span>' : "")
+    + (roof ? '<span class="wxroof">' + esc(roof) + ' roof</span>' : "")
+    + '</div>';
+}
+
+function gameCard(g){
+  const blank = g.st === "sched" || g.st === "off";
+  const tag = stakes(g);
+  const homeBats = g.st === "live" && /bottom/i.test(g.half||"");
+  const awayBats = g.st === "live" && /top/i.test(g.half||"");
+  let head = "";
+  if(g.st === "live") head = '<span class="livetag"><span class="dot live"></span>' + inningText(g) + '</span>';
+  else if(g.st === "final") head = '<span class="glabel">' + esc(g.detail || "Final") + '</span>';
+  else if(g.st === "off") head = '<span class="glabel warn">' + esc(g.detail) + '</span>';
+  else head = '<span class="glabel">' + dayName(g.start) + " " + clock(g.start) + '</span>';
+
+  let count = "";
+  if(g.st === "live" && g.balls != null){
+    const half = /^(top|bottom)$/i.test(g.half||"");
+    count = '<span class="count">' + (half ? '<span class="bs">' + g.balls + "–" + g.strikes + '</span>' : "")
+      + '<span class="outs">' + [0,1,2].map(i =>
+        '<i class="' + (i < (g.outs||0) ? "on" : "") + '"></i>').join("") + '</span></span>';
+  }
+
+  return '<article class="gcard"><header class="ghead">' + head + count
+    + (tag ? '<span class="chip ' + tag[0] + '">' + tag[1] + '</span>' : "") + '</header>'
+    + '<div class="matrix"><div class="mhead"><span></span><span>H</span><span>R</span></div>'
+    + side(g.aid, g.as, g.aH, !blank && g.as > g.hs, blank, awayBats)
+    + side(g.hid, g.hs, g.hH, !blank && g.hs > g.as, blank, homeBats)
+    + '</div>'
+    + weatherStrip(g)
+    + (g.st === "live" && g.balls != null
+        ? '<div class="livebar">' + diamond(g.onBase) + '<div class="matchup">'
+          + (g.batter ? '<span><em>AB</em>' + esc(g.batter) + '</span>' : "")
+          + (g.pitcher ? '<span><em>P</em>' + esc(g.pitcher) + '</span>' : "")
+          + '</div></div>'
+        : "")
+    + (g.st === "sched" && (g.hProb || g.aProb)
+        ? '<div class="probs"><span><em>' + ab(g.aid) + '</em>' + esc(g.aProb || "TBD") + '</span>'
+          + '<span><em>' + ab(g.hid) + '</em>' + esc(g.hProb || "TBD") + '</span></div>'
+        : "")
+    + '<footer class="gfoot"><span>' + esc(g.venue || city(g.hid)) + '</span>'
+    + '<button class="tlink" data-team="' + g.hid + '">' + ab(g.hid) + ' outlook →</button>'
+    + '</footer></article>';
+}
+
+function renderToday(){
+  const today = iso(new Date()), yday = iso(shift(-1)), tmw = iso(shift(1));
+  const mine = S.games.filter(g => g.date === today);
+  const live = mine.filter(g => g.st === "live");
+  const fin = mine.filter(g => g.st === "final");
+  const soon = mine.filter(g => g.st === "sched" || g.st === "off");
+  const last = S.games.filter(g => g.date === yday && g.st === "final");
+  const next = S.games.filter(g => g.date === tmw);
+
+  const scored = live.concat(fin);
+  const runs = scored.reduce((n,g) => n + (g.hs||0) + (g.as||0), 0);
+  const close = scored.filter(g => Math.abs((g.hs||0)-(g.as||0)) <= 1).length;
+
+  // Where the wind is most likely to matter: open air, blowing hard.
+  const windy = mine.map(g => {
+    const v = S.venues[g.venueId], w = wxAt(g.venueId, g.start);
+    if(!w || (v && v.roof && /dome|indoor|closed/i.test(v.roof))) return 0;
+    return w.wind;
+  }).filter(x => x >= 12).length;
+
+  const block = (title, arr) => arr.length
+    ? '<h2 class="eyebrow">' + title + '</h2><div class="grid">' + arr.map(gameCard).join("") + '</div>'
+    : "";
+
+  return '<div class="pane">'
+    + '<div class="ledger">'
+    + '<div><b>' + (live.length || mine.length) + '</b><span>' + (live.length ? "in progress" : "games today") + '</span></div>'
+    + '<div><b>' + (scored.length ? runs : windy) + '</b><span>' + (scored.length ? "runs today" : "windy parks") + '</span></div>'
+    + '<div><b>' + close + '</b><span>within a run</span></div></div>'
+    + block("On the field now", live)
+    + block("Final today", fin)
+    + block("Still to come", soon)
+    + (last.length ? SEAM + block("Last night", last) : "")
+    + block("Tomorrow", next)
+    + (mine.length + next.length === 0
+        ? '<div class="empty"><h3>Nothing scheduled</h3><p>No games today or tomorrow.</p></div>' : "")
+    + '<p class="note">Weather is the forecast for first pitch at each ballpark, from Open-Meteo. '
+    + 'Wind is given as the direction it blows <em>from</em>, the standard convention; the arrow '
+    + 'points where it is heading. Turning that into "out to right field" needs each park\'s compass '
+    + 'orientation, which is not in any feed here, so it is left out rather than guessed.</p>'
+    + '</div>';
+}
+
+function divTable(d){
+  const rows = inDiv(d);
+  if(!rows.length) return "";
+  const lead = rows[0], o = S.odds;
+  return '<section class="dblock"><h3 class="dname">' + DIV[d][0] + " " + DIV[d][1] + '</h3>'
+    + '<div class="thead"><span>Club</span><span>W–L</span><span>PCT</span><span>GB</span>'
+    + '<span>L10</span><span>Div%</span></div>'
+    + rows.map((t,i) =>
+      '<button class="trow" data-team="' + t.id + '">'
+      + '<span class="tpos">' + (i+1) + '</span>'
+      + '<span class="tbar" style="background:' + col(t.id) + '"></span>'
+      + '<span class="tname"><b>' + ab(t.id) + '</b><em>' + esc(nm(t.id)) + '</em></span>'
+      + '<span class="tnum">' + t.w + "–" + t.l + '</span>'
+      + '<span class="tnum dim">' + fmt3(pct(t)) + '</span>'
+      + '<span class="tnum dim">' + (t.gb && t.gb !== "-" ? t.gb : gbText(gbTo(t,lead))) + '</span>'
+      + '<span class="tnum dim sm">' + (t.l10 || "—") + '</span>'
+      + '<span class="pctcell"><span class="minibar"><i style="width:'
+        + Math.max(1.5, o[t.id].div*100) + '%;background:' + col(t.id) + '"></i></span>'
+      + '<em>' + pc(o[t.id].div) + '</em></span></button>').join("")
+    + '</section>';
+}
+
+function pictureBlock(lg){
+  const p = pictureOf(lg), o = S.odds;
+  if(p.wilds.length < 3) return "";
+  const cut = p.wilds[p.wilds.length-1];
+  const row = (t,label) => '<button class="prow" data-team="' + t.id + '">'
+    + '<span class="pseed">' + label + '</span>'
+    + '<span class="tbar" style="background:' + col(t.id) + '"></span>'
+    + '<span class="tname"><b>' + ab(t.id) + '</b><em>' + esc(nm(t.id)) + '</em></span>'
+    + '<span class="tnum">' + t.w + "–" + t.l + '</span>'
+    + '<span class="tnum dim">' + gbText(gbTo(t,cut)) + '</span>'
+    + '<span class="tnum dim">' + pc(o[t.id].berth) + '%</span></button>';
+  return '<section class="dblock"><h3 class="dname">' + lg + ' playoff picture</h3>'
+    + '<div class="pthead thead"><span>Club</span><span>W–L</span><span>GB cut</span><span>Oct%</span></div>'
+    + p.seeds.map((t,i) => row(t, String(i+1))).join("")
+    + p.wilds.map((t,i) => row(t, "WC" + (i+1))).join("")
+    + '<div class="cutline"><span>cutline</span></div>'
+    + p.chasing.slice(0,4).map(t => row(t,"—")).join("")
+    + '<p class="note">Seeds one to three are the division leaders by record. GB cut is games behind '
+    + 'the third wild card. This is the field as it stands now; Oct% is the projection.</p></section>';
+}
+
+function renderStandings(){
+  const lg = S.lg.standings;
+  return '<div class="pane">'
+    + '<div class="toggle" role="tablist">'
+    + ["AL","NL"].map(k => '<button role="tab" aria-selected="' + (lg===k) + '" class="'
+        + (lg===k?"on":"") + '" data-lg="standings:' + k + '">'
+        + (k==="AL"?"American":"National") + '</button>').join("")
+    + '</div>'
+    + DIVS[lg].map(divTable).join("")
+    + SEAM + pictureBlock(lg)
+    + '</div>';
+}
+
+function renderOdds(){
+  const lg = S.lg.odds, o = S.odds;
+  const rows = inLg(lg).sort((a,b) => o[b.id].berth - o[a.id].berth);
+  const all = list();
+  const n = f => all.filter(f).length;
+  return '<div class="pane">'
+    + '<div class="ledger">'
+    + '<div><b>' + n(t => o[t.id].berth > .9) + '</b><span>near locks</span></div>'
+    + '<div><b>' + n(t => o[t.id].berth > .02 && o[t.id].berth <= .9) + '</b><span>live in the race</span></div>'
+    + '<div><b>' + n(t => o[t.id].berth <= .02) + '</b><span>playing out the string</span></div></div>'
+    + '<div class="toggle" role="tablist">'
+    + ["AL","NL"].map(k => '<button role="tab" aria-selected="' + (lg===k) + '" class="'
+        + (lg===k?"on":"") + '" data-lg="odds:' + k + '">'
+        + (k==="AL"?"American":"National") + '</button>').join("")
+    + '</div>'
+    + '<div class="othead thead"><span>Club</span><span>Proj</span><span>Div</span><span>#1</span><span>Oct</span></div>'
+    + rows.map(t => { const x = o[t.id], pw = Math.round(x.projWins);
+      return '<button class="orow" data-team="' + t.id + '">'
+        + '<span class="tbar" style="background:' + col(t.id) + '"></span>'
+        + '<span class="tname"><b>' + ab(t.id) + '</b><em>' + esc(nm(t.id)) + '</em></span>'
+        + '<span class="tnum dim">' + pw + "–" + (SEASON_GAMES-pw) + '</span>'
+        + '<span class="tnum dim">' + pc(x.div) + '%</span>'
+        + '<span class="tnum dim sm">' + pc(x.top) + '%</span>'
+        + '<span class="obar"><i style="width:' + Math.max(1.5, x.berth*100) + '%;background:'
+          + col(t.id) + '"></i><em>' + pc(x.berth) + '</em></span></button>'; }).join("")
+    + '<div class="method"><h4>How these numbers are made</h4>'
+    + '<p>Each club plays out its remaining games at its own winning percentage, pulled toward .500 '
+    + 'by ' + REGRESS + ' games so a hot stretch does not run away with the forecast. Three division '
+    + 'winners and three wild cards per league; ties are coin flips.</p>'
+    + '<p class="caveat">Not in the model: strength of schedule, run differential, injuries, trades '
+    + 'or home-field advantage. Read gaps of a few points as noise.</p>'
+    + '<div class="mrow"><span>' + SIMS.toLocaleString() + ' seasons</span>'
+    + '<button class="btn" id="rerun"' + (S.simBusy?" disabled":"") + '>'
+    + (S.simBusy ? "Simulating…" : "Run it again") + '</button></div></div></div>';
+}
+
+function renderSheet(){
+  const t = S.teams[S.sheet]; if(!t) return "";
+  const id = t.id, o = S.odds[id], d = DIV[t.div];
+  const rows = inDiv(t.div), rank = rows.findIndex(x => x.id === id) + 1;
+  const lead = rows[0], p = pictureOf(d[0]), cut = p.wilds[p.wilds.length-1];
+  const done = S.games.filter(g => (g.hid===id||g.aid===id) && (g.st==="final"||g.st==="live"));
+  const next = S.games.filter(g => (g.hid===id||g.aid===id) && g.st==="sched");
+  const ord = ["","1st","2nd","3rd","4th","5th"][rank] || rank + "th";
+
+  return '<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-label="'
+    + esc(nm(id)) + ' outlook"><div class="shandle"></div>'
+    + '<header class="shead" style="border-color:' + col(id) + '"><div>'
+    + '<p class="eyebrow tight">' + d[0] + " " + d[1] + " · " + ord + '</p>'
+    + '<h3>' + esc((city(id) ? city(id) + " " : "") + nm(id)) + '</h3></div>'
+    + '<button class="x" id="closeSheet" aria-label="Close">✕</button></header>'
+    + '<div class="stats"><div><b>' + t.w + "–" + t.l + '</b><span>record</span></div>'
+    + '<div><b>' + fmt3(pct(t)) + '</b><span>win rate</span></div>'
+    + '<div><b>' + left(t) + '</b><span>games left</span></div></div>'
+    + '<div class="stats"><div><b>' + gbText(gbTo(t,lead)) + '</b><span>gb division</span></div>'
+    + '<div><b>' + (cut && cut.id === id ? "—" : gbText(gbTo(t,cut||lead))) + '</b><span>gb cutline</span></div>'
+    + '<div><b>' + (t.streak || "—") + '</b><span>streak</span></div></div>'
+    + '<div class="stats"><div><b>' + Math.round(o.projWins) + '</b><span>projected wins</span></div>'
+    + '<div><b>' + pc(o.div) + '%</b><span>win division</span></div>'
+    + '<div><b>' + pc(o.berth) + '%</b><span>reach october</span></div></div>'
+    + '<div class="swing">' + (S.swing != null
+        ? '<p>One win instead of one loss moves ' + ab(id) + '\u2019s October odds by <b>'
+          + (S.swing*100).toFixed(1) + ' points</b>. Every remaining game carries roughly this much.</p>'
+        : '<button class="btn wide" id="measure"' + (S.swingBusy?" disabled":"") + '>'
+          + (S.swingBusy ? "Simulating…" : "What is one game worth?") + '</button>') + '</div>'
+    + '<h4 class="ssub">Recent</h4><ul class="slist">'
+    + (done.length ? done.map(g => {
+        const home = g.hid === id, mine = home ? g.hs : g.as, theirs = home ? g.as : g.hs;
+        const opp = home ? g.aid : g.hid, live = g.st === "live";
+        return '<li><span class="res ' + (live ? "n" : mine > theirs ? "w" : "l") + '">'
+          + (live ? "•" : mine > theirs ? "W" : "L") + '</span>'
+          + '<span class="opp">' + (home ? "vs " : "at ") + ab(opp) + '</span>'
+          + '<span class="line">' + mine + "–" + theirs + '</span>'
+          + '<span class="when">' + (live ? inningText(g) : dayName(g.start)) + '</span></li>';
+      }).join("") : '<li class="empty">Nothing in this window yet.</li>')
+    + '</ul>'
+    + (next.length ? '<h4 class="ssub">Next up</h4><ul class="slist">' + next.map(g =>
+        '<li><span class="res n">→</span><span class="opp">'
+        + (g.hid === id ? "vs " : "at ") + ab(g.hid === id ? g.aid : g.hid) + '</span>'
+        + '<span class="line"></span><span class="when">' + dayName(g.start) + " " + clock(g.start)
+        + '</span></li>').join("") + '</ul>' : "")
+    + '</div></div>';
+}
+
+function render(){
+  const app = document.getElementById("app");
+  const live = S.games.some(g => g.st === "live");
+  const stamp = S.at ? clock(S.at) : "";
+  const dotClass = S.phase === "ready" ? (live ? "live" : "ok") : S.phase === "error" ? "bad" : "";
+  const statusText = S.phase === "ready" ? (live ? "Live" : "Updated " + stamp)
+    : S.phase === "error" ? "Offline" : "Loading";
+
+  let body;
+  if(S.phase === "loading") body = '<p class="load">Loading the league…</p>';
+  else if(S.phase === "error")
+    body = '<div class="pane"><div class="empty"><h3>Could not reach the data</h3>'
+      + '<p>' + esc(S.err || "Unknown error") + '. Both feeds are public and need no key, so this is '
+      + 'usually a connection problem. Pull to refresh or tap Refresh above.</p></div></div>';
+  else if(S.tab === "today") body = renderToday();
+  else if(S.tab === "standings") body = renderStandings();
+  else body = renderOdds();
+
+  app.innerHTML =
+    '<header class="mast"><div class="mtop">' + BALL
+    + '<div><h1 class="wordmark">108</h1><p class="tagline">Baseball by the numbers</p></div>'
+    + '<div class="feed"><span class="feedrow"><span class="dot ' + dotClass + '"></span>'
+    + statusText + '</span><button class="refresh" id="refresh">Refresh</button></div></div>'
+    + '<nav class="tabs" role="tablist">'
+    + [["today","Today"],["standings","Standings"],["odds","Odds"]].map(([k,label]) =>
+        '<button role="tab" aria-selected="' + (S.tab===k) + '" data-tab="' + k + '">'
+        + label + '</button>').join("")
+    + '</nav></header>'
+    + (S.phase === "ready" && S.err
+        ? '<p class="banner"><b>Last refresh failed.</b> Showing data from ' + stamp + '.</p>' : "")
+    + body
+    + '<footer class="foot">108 — the number of double stitches on a regulation baseball.<br>'
+    + 'Scores, records and venues from the MLB Stats API. Weather from Open-Meteo. '
+    + 'Odds simulated in this browser from the records above.</footer>'
+    + (S.sheet ? renderSheet() : "");
+}
+
+/* ============================== events ============================== */
+
+document.addEventListener("click", e => {
+  const tab = e.target.closest("[data-tab]");
+  if(tab){ S.tab = tab.dataset.tab; render(); return; }
+
+  const lg = e.target.closest("[data-lg]");
+  if(lg){ const [view,k] = lg.dataset.lg.split(":"); S.lg[view] = k; render(); return; }
+
+  const team = e.target.closest("[data-team]");
+  if(team){ S.sheet = Number(team.dataset.team); S.swing = null; render(); return; }
+
+  if(e.target.closest("#refresh")){ load(); return; }
+
+  if(e.target.closest("#rerun")){
+    S.simBusy = true; render();
+    setTimeout(() => { S.odds = simulate(SIMS); S.simBusy = false; render(); }, 20);
+    return;
+  }
+
+  if(e.target.closest("#measure")){
+    const id = S.sheet;
+    S.swingBusy = true; render();
+    setTimeout(() => {
+      const won = simulate(SHEET_SIMS, {id, add:1});
+      const lost = simulate(SHEET_SIMS, {id, add:0});
+      S.swing = won[id].berth - lost[id].berth;
+      S.swingBusy = false; render();
+    }, 20);
+    return;
+  }
+
+  if(e.target.closest("#closeSheet") || e.target.id === "scrim"){
+    S.sheet = null; S.swing = null; render();
+  }
+});
+
+document.addEventListener("keydown", e => {
+  if(e.key === "Escape" && S.sheet){ S.sheet = null; S.swing = null; render(); }
+});
+
+/* Poll faster while games are in progress. */
+setInterval(() => {
+  if(S.phase === "error") return;
+  const live = S.games.some(g => g.st === "live");
+  const age = S.at ? Date.now() - S.at.getTime() : Infinity;
+  if(age > (live ? 30000 : 180000)) load();
+}, 15000);
+
+document.addEventListener("visibilitychange", () => {
+  if(!document.hidden && S.at && Date.now() - S.at.getTime() > 60000) load();
+});
+
+load();
+</script>
+</body>
+</html>
