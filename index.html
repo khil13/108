@@ -358,6 +358,15 @@ ul{margin:0;padding:0;list-style:none;}
 .obar i{display:block;height:6px;border-radius:3px;flex:0 0 auto;max-width:42px;}
 .obar em{font-style:normal;font-family:var(--mono);font-size:12px;margin-left:auto;}
 
+.fitem{background:var(--deep);border:1px solid var(--line);border-radius:5px;
+  padding:10px 13px 11px;margin-top:8px;}
+.fitem.mine{border-left:3px solid var(--bulb);}
+.fhead2{display:grid;grid-template-columns:3px auto 1fr;gap:9px;align-items:center;justify-items:start;}
+.fclub{font-family:var(--display);font-size:14px;letter-spacing:.04em;color:var(--chalk);}
+.fdesc{margin-top:7px;font-size:13px;line-height:1.55;color:var(--slate);}
+.fitem.mine .fdesc{color:var(--chalk);}
+.chip.grass{color:var(--grass);border-color:#1E4634;background:#0F2A1D;}
+.chip.blush{color:var(--blush);border-color:#5E2029;background:#2A1418;}
 .cardblk{background:var(--deep);border:1px solid var(--line);border-radius:5px;
   padding:11px 13px 10px;margin-top:10px;}
 .cbhead{display:flex;align-items:baseline;gap:10px;padding-bottom:8px;
@@ -476,7 +485,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "54 — live win probability";
+const BUILD = "56 — Feed tab; standings moved into Odds";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -541,9 +550,9 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 /* ============================== state =============================== */
 
 const S = {
-  tab:"today", lg:{standings:"AL", odds:"NL"},
+  tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, teamBat:{}, teamPit:{}, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, teamBat:{}, teamPit:{}, rosters:{}, feed:[], feedState:"idle", feedMine:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, seed:0, simBusy:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -1241,10 +1250,41 @@ function bestMatchup(g){
   return best;
 }
 
+/* Which club each player is actually on now.
+
+   MLB reports hitting stats against whichever club a player earned them with,
+   so a mid-season trade leaves someone listed under a former team — the power
+   block would show a hitter who cannot possibly bat in tonight's game. This is
+   the check that catches it: one request for all thirty rosters, then anyone
+   whose stats are filed under a club they no longer play for is dropped.
+
+   If the request fails the app behaves as it did before, listing them, which is
+   wrong but not broken. */
+async function loadRosters(){
+  const yr = new Date().getFullYear();
+  const out = {};
+  let j;
+  try{
+    j = await getJSON(MLB + "/teams?sportId=1&season=" + yr + "&hydrate=roster(person)");
+  }catch(e){ return out; }
+  for(const t of j.teams || []){
+    if(!T[t.id]) continue;
+    // The shape has varied; accept either a bare array or a nested one.
+    const list = Array.isArray(t.roster) ? t.roster
+      : (t.roster && Array.isArray(t.roster.roster)) ? t.roster.roster : null;
+    if(!list) continue;
+    for(const entry of list){
+      const pid = (entry.person || {}).id;
+      if(pid) out[pid] = t.id;
+    }
+  }
+  return out;
+}
+
 /* Every regular's season hitting line in one request, sorted by home runs,
    then grouped by club. A 100 plate-appearance floor keeps a callup with two
    homers in nine games out of the leaders. */
-async function loadHitters(){
+async function loadHitters(rosters){
   const byTeam = {};
   const yr = new Date().getFullYear();
   let j;
@@ -1266,6 +1306,11 @@ async function loadHitters(){
 
     const hr = st.homeRuns, pa = st.plateAppearances;
     if(!hr || hr <= 0 || !pa || pa < 100) continue;
+    /* Drop anyone whose stats sit under a club they have since left. Only
+       applied when the roster list actually loaded. */
+    const pid = (s.player || {}).id;
+    if(rosters && Object.keys(rosters).length && pid
+       && rosters[pid] && rosters[pid] !== tid) continue;
     (byTeam[tid] = byTeam[tid] || []).push({
       id:(s.player || {}).id,
       name:(s.player || {}).fullName || "—", hr, pa, perPA:pa / hr
@@ -1319,6 +1364,65 @@ async function loadBullpens(){
   const teamPit = {};
   for(const k in pit) if(pit[k].ip > 200) teamPit[k] = { k9:9 * pit[k].k / pit[k].ip };
   return { teams, lg:lgIP > 0 ? 9 * lgER / lgIP : null, teamPit };
+}
+
+/* ---------------- the feed ----------------
+   MLB publishes every roster move as a transaction: trades, injured-list
+   placements, activations, call-ups, releases. The descriptions are MLB's own
+   prose, so this is a news feed without a word of it being written here. */
+const FEED_DAYS = 12;
+
+/* A short badge from MLB's type and wording. Status Change covers both going
+   on the injured list and coming off it, so the description settles which. */
+function feedKind(t){
+  const d = (t.typeDesc || "").toLowerCase();
+  const note = (t.description || "").toLowerCase();
+  if(d.includes("trade")) return { tag:"trade", tone:"seam" };
+  if(note.includes("injured list") || note.includes("60-day") || note.includes("il"))
+    return note.includes("activated") || note.includes("reinstated")
+      ? { tag:"back", tone:"grass" } : { tag:"injured", tone:"blush" };
+  if(note.includes("activated") || note.includes("reinstated")) return { tag:"back", tone:"grass" };
+  if(d.includes("selected") || d.includes("recalled")) return { tag:"called up", tone:"bulb" };
+  if(d.includes("optioned") || d.includes("assigned")) return { tag:"sent down", tone:"slate" };
+  if(d.includes("designated")) return { tag:"dfa", tone:"slate" };
+  if(d.includes("released")) return { tag:"released", tone:"slate" };
+  if(d.includes("signed")) return { tag:"signed", tone:"bulb" };
+  if(d.includes("claimed")) return { tag:"claimed", tone:"bulb" };
+  return { tag:(t.typeDesc || "move").toLowerCase(), tone:"slate" };
+}
+
+async function loadFeed(){
+  const from = iso(shift(-FEED_DAYS)), to = iso(shift(1));
+  let j;
+  try{
+    j = await getJSON(MLB + "/transactions?sportId=1&startDate=" + from + "&endDate=" + to);
+  }catch(e){ return []; }
+  const out = [];
+  for(const t of j.transactions || []){
+    if(!t.description) continue;
+    const tid = (t.team || {}).id;
+    out.push({
+      id:t.id, date:t.date || t.effectiveDate || "",
+      team:T[tid] ? tid : null,
+      from:((t.fromTeam || {}).id) || null,
+      person:(t.person || {}).fullName || null,
+      desc:t.description,
+      kind:feedKind(t)
+    });
+  }
+  // Newest first; MLB returns them oldest first.
+  out.sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+  return out;
+}
+
+async function ensureFeed(){
+  if(S.feedState !== "idle") return;
+  S.feedState = "loading";
+  render();
+  S.feed = await loadFeed();
+  S.feedState = "ready";
+  S.diag.feed = S.feed.length;
+  render();
 }
 
 /* Venue coordinates and roof type come from MLB, so no ballpark list is
@@ -1538,7 +1642,11 @@ async function loadDetail(){
   await ensureSeason();
 
   if(!Object.keys(S.hitters).length){
-    const hit = await loadHitters();
+    if(!Object.keys(S.rosters).length){
+      S.rosters = await loadRosters();
+      S.diag.rosters = Object.keys(S.rosters).length;
+    }
+    const hit = await loadHitters(S.rosters);
     S.hitters = hit.byTeam; S.teamBat = hit.teamBat;
     render();
   }
@@ -2251,8 +2359,14 @@ function followStrip(){
     if(st.kind === "live"){
       const me = home ? g.hs : g.as, them = home ? g.as : g.hs;
       const edge = me > them ? "up" : me < them ? "down" : "tied";
+      // The number is already computed for the card; this is where you want it.
+      const w = liveWinProb(g);
+      const mine = w ? (home ? w.pHome : 1 - w.pHome) : null;
       line = '<b>' + me + '\u2013' + them + '</b> ' + edge + ' ' + vs
-        + ' \u00b7 ' + inningText(g);
+        + ' \u00b7 ' + inningText(g)
+        + (mine != null
+            ? ' \u00b7 <b>' + Math.min(99, Math.max(1, Math.round(mine * 100))) + '%</b>'
+            : "");
     } else if(st.kind === "next"){
       line = vs + ' \u00b7 ' + dayName(g.start) + ' ' + clock(g.start);
     } else {
@@ -2466,10 +2580,11 @@ function renderToday(){
     + 'starter\'s last three outings, a hitter\'s last five games. Those are exact, not '
     + 'sampled from a date window. Logs are per player, so a card\'s hitters are fetched '
     + 'when you open it and not before.</p>'
-    + '<p class="note">One limitation worth knowing: MLB reports hitting stats against '
-    + 'the club a player earned them with, so a mid-season trade can leave someone listed '
-    + 'under a former team, or split across two. There is no roster check here to catch '
-    + 'it. If a name looks out of place, that is why.</p>'
+    + '<p class="note">MLB reports hitting stats against the club a player earned them '
+    + 'with, so a mid-season trade would otherwise leave someone listed under a former '
+    + 'team. Every club\'s current roster is checked against, and anyone filed under a club '
+    + 'they have left is dropped. If that check fails to load they are listed as before, '
+    + 'and the loaded counts in the footer will show it.</p>'
     + '<p class="note">The model line is this app\'s own view: each club\'s '
     + 'winning percentage regressed toward .500, a home edge worth about four points, '
     + 'and a damped adjustment for the gap between the two starters\' ERAs. The two '
@@ -2607,18 +2722,6 @@ function pictureBlock(lg){
     + 'the third wild card. This is the field as it stands now; Oct% is the projection.</p></section>';
 }
 
-function renderStandings(){
-  const lg = S.lg.standings;
-  return '<div class="pane">'
-    + '<div class="toggle" role="tablist">'
-    + ["AL","NL"].map(k => '<button role="tab" aria-selected="' + (lg===k) + '" class="'
-        + (lg===k?"on":"") + '" data-lg="standings:' + k + '">'
-        + (k==="AL"?"American":"National") + '</button>').join("")
-    + '</div>'
-    + DIVS[lg].map(divTable).join("")
-    + SEAM + pictureBlock(lg)
-    + '</div>';
-}
 
 /* A search over the two weights that matter, now that there is a measure to
    search against. Sixteen replays of the season, which is fast because the data
@@ -2756,16 +2859,23 @@ function renderOdds(){
   const rows = inLg(lg).sort((a,b) => o[b.id].berth - o[a.id].berth);
   const all = list();
   const n = f => all.filter(f).length;
+  const divs = lg === "AL" ? [201,202,200] : [204,205,203];
   return '<div class="pane">'
-    + '<div class="ledger">'
-    + '<div><b>' + n(t => o[t.id].berth > .9) + '</b><span>near locks</span></div>'
-    + '<div><b>' + n(t => o[t.id].berth > .02 && o[t.id].berth <= .9) + '</b><span>live in the race</span></div>'
-    + '<div><b>' + n(t => o[t.id].berth <= .02) + '</b><span>playing out the string</span></div></div>'
     + '<div class="toggle" role="tablist">'
     + ["AL","NL"].map(k => '<button role="tab" aria-selected="' + (lg===k) + '" class="'
         + (lg===k?"on":"") + '" data-lg="odds:' + k + '">'
         + (k==="AL"?"American":"National") + '</button>').join("")
     + '</div>'
+    /* Standings live here now that the Feed has the fourth tab. They sit under
+       the same league toggle as the forecast, which reads as one thing: where
+       each club stands and where it is going. */
+    + divs.map(divTable).join("")
+    + SEAM + pictureBlock(lg)
+    + SEAM
+    + '<div class="ledger">'
+    + '<div><b>' + n(t => o[t.id].berth > .9) + '</b><span>near locks</span></div>'
+    + '<div><b>' + n(t => o[t.id].berth > .02 && o[t.id].berth <= .9) + '</b><span>live in the race</span></div>'
+    + '<div><b>' + n(t => o[t.id].berth <= .02) + '</b><span>playing out the string</span></div></div>'
     + '<div class="othead thead"><span>Club</span><span>Wins</span><span>Div</span><span>#1</span><span>Oct</span></div>'
     + rows.map(t => { const x = o[t.id];
       return '<button class="orow" data-team="' + t.id + '">'
@@ -2981,6 +3091,65 @@ function cardBlock(g){
     + '</article>';
 }
 
+/* The feed, newest first, grouped by day. Entries touching the club you follow
+   are marked, and can be shown on their own. */
+function renderFeed(){
+  if(S.feedState === "loading" && !S.feed.length)
+    return '<div class="pane"><p class="load">Reading transactions\u2026</p></div>';
+  if(!S.feed.length)
+    return '<div class="pane"><div class="empty"><h3>Nothing to report</h3>'
+      + '<p>No roster moves in the last ' + FEED_DAYS + ' days, or the transactions '
+      + 'feed could not be reached.</p></div></div>';
+
+  const mine = e => S.follow && (e.team === S.follow || e.from === S.follow);
+  const list = S.feedMine ? S.feed.filter(mine) : S.feed;
+  const mineCount = S.feed.filter(mine).length;
+
+  const byDay = [];
+  for(const e of list){
+    const last = byDay[byDay.length - 1];
+    if(last && last.date === e.date) last.items.push(e);
+    else byDay.push({ date:e.date, items:[e] });
+  }
+
+  const dayLabelOf = d => {
+    if(d === iso(new Date())) return "Today";
+    if(d === iso(shift(-1))) return "Yesterday";
+    const dt = new Date(d + "T12:00:00");
+    return isNaN(dt) ? d : dt.toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
+  };
+
+  return '<div class="pane">'
+    + (S.follow && mineCount
+        ? '<div class="toggle" role="tablist">'
+          + '<button role="tab" aria-selected="' + (!S.feedMine) + '" class="'
+            + (!S.feedMine ? "on" : "") + '" data-feed="all">Everything</button>'
+          + '<button role="tab" aria-selected="' + (!!S.feedMine) + '" class="'
+            + (S.feedMine ? "on" : "") + '" data-feed="mine">'
+            + ab(S.follow) + ' only (' + mineCount + ')</button>'
+          + '</div>'
+        : "")
+    + (list.length
+        ? byDay.map(d => '<h2 class="eyebrow">' + esc(dayLabelOf(d.date)) + '</h2>'
+            + d.items.map(e => '<article class="fitem' + (mine(e) ? " mine" : "") + '">'
+              + '<div class="fhead2">'
+                + '<span class="tbar" style="background:'
+                  + (e.team ? col(e.team) : "var(--line)") + '" aria-hidden="true"></span>'
+                + '<span class="fclub">' + (e.team ? ab(e.team) : "\u2014") + '</span>'
+                + '<span class="chip ' + e.kind.tone + '">' + esc(e.kind.tag) + '</span>'
+              + '</div>'
+              + '<p class="fdesc">' + esc(e.desc) + '</p>'
+              + '</article>').join("")).join("")
+        : '<div class="empty"><h3>Nothing for ' + ab(S.follow) + '</h3>'
+          + '<p>No moves involving them in the last ' + FEED_DAYS + ' days.</p></div>')
+    + '<p class="note">Every line is MLB\'s own wording for a roster move, not a summary '
+    + 'written here. Trades, injured-list placements and activations, call-ups, options '
+    + 'and releases \u2014 the last ' + FEED_DAYS + ' days. There is no injury reporting '
+    + 'beyond what a transaction states, so a knock that does not cost a roster spot will '
+    + 'not appear.</p>'
+    + '</div>';
+}
+
 function renderPlays(){
   const today = iso(new Date());
   const upcoming = S.games.filter(g => g.date === today && g.st === "sched")
@@ -3038,7 +3207,7 @@ function render(resetScroll){
       + '<p>' + esc(S.err || "Unknown error") + '. Both feeds are public and need no key, so this is '
       + 'usually a connection problem. Pull to refresh or tap Refresh above.</p></div></div>';
   else if(S.tab === "today") body = renderToday();
-  else if(S.tab === "standings") body = renderStandings();
+  else if(S.tab === "feed") body = renderFeed();
   else if(S.tab === "odds") body = renderOdds();
   else body = renderPlays();
 
@@ -3048,7 +3217,7 @@ function render(resetScroll){
     + '<div class="feed"><span class="feedrow"><span class="dot ' + dotClass + '"></span>'
     + statusText + '</span><button class="refresh" id="refresh">Refresh</button></div></div>'
     + '<nav class="tabs" role="tablist" aria-label="Views">'
-    + [["today","Today"],["standings","Standings"],["odds","Odds"],["plays","Plays"]].map(([k,label]) =>
+    + [["today","Today"],["feed","Feed"],["odds","Odds"],["plays","Plays"]].map(([k,label]) =>
         '<button role="tab" id="tab-' + k + '" aria-controls="pane"'
         + ' aria-selected="' + (S.tab===k) + '" tabindex="' + (S.tab===k ? "0" : "-1") + '"'
         + ' data-tab="' + k + '">' + label + '</button>').join("")
@@ -3067,7 +3236,7 @@ function render(resetScroll){
     + 'Odds simulated in this browser from the records above.<br>'
     + 'Build ' + BUILD
     + (Object.keys(S.diag).length
-        ? '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","spHistory","hitters","hitterForm"]
+        ? '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","spHistory","rosters","hitters","hitterForm"]
             .filter(k => S.diag[k] != null)
             .map(k => k + ' ' + S.diag[k]).join(' \u00b7 ')
         : "")
@@ -3125,6 +3294,7 @@ document.addEventListener("click", e => {
     S.tab = tab.dataset.tab;
     if(S.tab === "odds") ensureSeason();   // the forecast wants the real fixture list
     if(S.tab === "plays"){ ensureSeason(); loadDetail(); }
+    if(S.tab === "feed") ensureFeed();
     render(true);
     return;
   }
@@ -3158,6 +3328,9 @@ document.addEventListener("click", e => {
     })();
     return;
   }
+
+  const fd = e.target.closest("[data-feed]");
+  if(fd){ S.feedMine = fd.dataset.feed === "mine"; render(); return; }
 
   if(e.target.closest("#markSeen")){ saveBaseline(); render(); return; }
 
@@ -3238,7 +3411,7 @@ document.addEventListener("keydown", e => {
   // Arrow keys move between tabs — expected behaviour for role="tablist".
   if((e.key === "ArrowRight" || e.key === "ArrowLeft")
      && document.activeElement && document.activeElement.getAttribute("role") === "tab"){
-    const order = ["today","standings","odds","plays"];
+    const order = ["today","feed","odds","plays"];
     const i = order.indexOf(S.tab);
     const next = order[(i + (e.key === "ArrowRight" ? 1 : order.length - 1)) % order.length];
     S.tab = next;
