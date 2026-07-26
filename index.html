@@ -140,6 +140,12 @@ ul{margin:0;padding:0;list-style:none;}
 .outs{display:flex;gap:3px;}
 .outs i{width:5px;height:5px;border-radius:50%;border:1px solid #3A5A60;display:block;}
 .outs i.on{background:var(--seam);border-color:var(--seam);}
+.lastplay{margin:0 -4px 8px;padding:8px 10px 9px;border-radius:3px;
+  background:#0F2126;border:1px solid #1C3A40;}
+.lastplay .chip{vertical-align:1px;}
+.lpwhen{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+  color:#738E93;margin-left:8px;}
+.lpdesc{margin-top:6px;font-size:12.5px;line-height:1.5;color:var(--chalk);}
 .liveodds{margin:0 -4px 8px;}
 .lobar{display:flex;height:6px;border-radius:3px;overflow:hidden;background:#0B1618;}
 .lobar i{display:block;height:100%;transition:width .4s ease;}
@@ -485,7 +491,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "59 — live win probability fix";
+const BUILD = "60 — last play on live cards";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -552,7 +558,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, teamBat:{}, teamPit:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, teamBat:{}, teamPit:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, simBusy:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -1689,6 +1695,21 @@ async function loadDetail(){
   ensureHitterForm();
 }
 
+/* What just happened. MLB names the event and writes the sentence, so the only
+   judgement here is which ones are worth colouring. */
+function playKind(event){
+  const e = (event || "").toLowerCase();
+  if(e.includes("home run")) return { tag:"home run", tone:"seam" };
+  if(e === "triple") return { tag:"triple", tone:"bulb" };
+  if(e === "double") return { tag:"double", tone:"bulb" };
+  if(e === "single") return { tag:"single", tone:"grass" };
+  if(e.includes("strikeout")) return { tag:"strikeout", tone:"blush" };
+  if(e.includes("walk") || e.includes("hit by pitch")) return { tag:e, tone:"slate" };
+  if(e.includes("error")) return { tag:"error", tone:"blush" };
+  if(e.includes("stolen base")) return { tag:"steal", tone:"grass" };
+  return { tag:e || "play", tone:"slate" };
+}
+
 /* Box scores for games in progress. This is where the batter's season line and
    the pitcher's count live — nothing lighter carries them.
 
@@ -1702,9 +1723,30 @@ async function loadBoxscores(){
   if(age < 60000) return;
 
   const out = Object.assign({}, S.box);
+  const lastPlays = Object.assign({}, S.lastPlay);
   const CHUNK = 4;
   for(let i = 0; i < live.length; i += CHUNK){
     await Promise.all(live.slice(i, i + CHUNK).map(async g => {
+      /* Two documents per live game: the box score for the lines and counts, the
+         play-by-play for what just happened. Shared throttle, so a minute apart
+         rather than every thirty seconds. */
+      try{
+        const pbp = await getJSON(MLB + "/game/" + g.pk + "/playByPlay");
+        const plays = (pbp && pbp.allPlays) || [];
+        for(let n = plays.length - 1; n >= 0; n--){
+          const p = plays[n];
+          if(!(p.about || {}).isComplete || !(p.result || {}).event) continue;
+          lastPlays[g.pk] = {
+            event:p.result.event,
+            desc:p.result.description || "",
+            top:!!(p.about || {}).isTopInning,
+            inning:(p.about || {}).inning,
+            kind:playKind(p.result.event)
+          };
+          break;
+        }
+      }catch(e){ /* the box score below is still worth having */ }
+
       let j;
       try{ j = await getJSON(MLB + "/game/" + g.pk + "/boxscore"); }catch(e){ return; }
       for(const sideKey of ["home", "away"]){
@@ -1733,6 +1775,7 @@ async function loadBoxscores(){
     }));
   }
   S.box = out;
+  S.lastPlay = lastPlays;
   S.boxAt = Date.now();
   S.diag.box = Object.keys(out).length;
   render();
@@ -2279,6 +2322,19 @@ function detail(g){
 }
 
 /* A bar for the live win probability, split at the current split. */
+/* The last completed play, in MLB's words. Trimmed of the leading batter name
+   where the badge and the description would otherwise repeat it. */
+function lastPlayLine(g){
+  if(g.st !== "live") return "";
+  const p = S.lastPlay[g.pk];
+  if(!p || !p.desc) return "";
+  return '<div class="lastplay">'
+    + '<span class="chip ' + p.kind.tone + '">' + esc(p.kind.tag) + '</span>'
+    + '<span class="lpwhen">' + (p.top ? "T" : "B") + p.inning + '</span>'
+    + '<p class="lpdesc">' + esc(p.desc) + '</p>'
+    + '</div>';
+}
+
 function liveOdds(g){
   const w = liveWinProb(g);
   if(!w) return "";
@@ -2349,6 +2405,7 @@ function gameCard(g){
               : "")
           + '</div></div>'
         : "")
+    + lastPlayLine(g)
     + onMound(g)
     + (g.st === "sched" ? detail(g) : "")
     + '<footer class="gfoot"><span>' + esc(g.venue || city(g.hid)) + '</span>'
