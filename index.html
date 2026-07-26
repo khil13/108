@@ -452,13 +452,30 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "46 — weight sweep: let the season pick the constants";
+const BUILD = "47 — weights set by calibration";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
-const REGRESS = 40;          // games of .500 folded into every record
+/* Two regressions, because there are two questions.
+
+   REGRESS_SEASON estimates a club's true strength over the ~58 games it has
+   left. Forty games of .500 puts the Dodgers at .600, close to what a 67-38
+   club actually goes on to play.
+
+   REGRESS_GAME is for predicting one game, and the calibration test picked it:
+   400 scored best over 1,192 games. That is not because records suddenly matter
+   less — it is because the log-odds mapping was producing spreads far too wide
+   for a single baseball game, and heavy regression compresses them back. 160
+   through 4,000 all scored within 0.0003, so the finding is "much more than
+   40", not precisely 400. */
+const REGRESS_SEASON = 40;
+const REGRESS_GAME = 400;
+const REGRESS = REGRESS_SEASON;   // what the season simulation uses
 const HFA = 0.16;            // log-odds home edge; MLB homes win about 54%
-const SP_WEIGHT = 0.10;      // log-odds per run of starter ERA advantage
+/* Raised from 0.10 on the calibration's evidence: 0.15 scored better over the
+   same 1,192 games, and starters were the only component that beat the
+   home-field baseline at all. */
+const SP_WEIGHT = 0.15;      // log-odds per run of starter ERA advantage
 const SP_CAP = 3;            // ERA gap beyond this stops adding signal
 /* A bullpen covers roughly 3.6 of a game's 9 innings against a starter's 5.4,
    so it gets about two thirds of the starter's weight: 0.10 x 3.6/5.4. */
@@ -1591,12 +1608,13 @@ const pairOf = s => {
 
 /* A club's true rate: season record, plus its last ten counted again K times,
    then regressed toward .500. */
-function teamRate(t){
+function teamRate(t, regress){
+  const R = regress == null ? REGRESS_SEASON : regress;
   const k = RECENCY_W;
   const ten = pairOf(t.l10);
   const addW = ten ? k * ten.w : 0;
   const addG = ten ? k * (ten.w + ten.l) : 0;
-  return (t.w + addW + REGRESS / 2) / (t.w + t.l + addG + REGRESS);
+  return (t.w + addW + R / 2) / (t.w + t.l + addG + R);
 }
 
 /* A starter's effective ERA, with his last three outings counted again K
@@ -1627,7 +1645,7 @@ function project(g){
   if(!h || !a) return null;
   const lg = p => Math.log(p / (1 - p));
 
-  let d = lg(teamRate(h)) - lg(teamRate(a)) + HFA;
+  let d = lg(teamRate(h, REGRESS_GAME)) - lg(teamRate(a, REGRESS_GAME)) + HFA;
 
   const hp = S.pitchers[g.hProbId], ap = S.pitchers[g.aProbId];
   const hEra = starterEra(hp), aEra = starterEra(ap);
@@ -2575,6 +2593,11 @@ function renderOdds(){
     + '<p>Each club plays out its remaining games at its own winning percentage, pulled toward .500 '
     + 'by ' + REGRESS + ' games so a hot stretch does not run away with the forecast. Three division '
     + 'winners and three wild cards per league; ties are coin flips.</p>'
+    + '<p>The single-game model on the cards regresses far harder \u2014 '
+    + REGRESS_GAME + ' games rather than ' + REGRESS_SEASON + ' \u2014 because the '
+    + 'calibration below measured that and it scored considerably better. The two differ '
+    + 'because they answer different questions: estimating what a club does over fifty-'
+    + 'eight games is not the same as predicting one, where records barely matter.</p>'
     + '<p>' + (S.remaining && S.remaining.length > 100
         ? 'The remaining ' + S.remaining.length.toLocaleString() + ' games are played out '
           + 'on the real fixture list, each between the two clubs actually involved with a '
