@@ -468,7 +468,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "51 — desktop layout";
+const BUILD = "52 — run projection shown honestly";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -1070,6 +1070,11 @@ function backtest(recencyW, useSP, regress, spWeight){
   let brier = 0, right = 0, absErr = 0, bias = 0, naiveErr = 0, spN = 0;
   const bands = [[.50,.55],[.55,.60],[.60,.65],[.65,.70],[.70,1.01]]
     .map(([lo,hi]) => ({ lo, hi, n:0, sumP:0, won:0 }));
+  /* Absolute accuracy and ranking are different questions. A projection can be
+     useless at calling one game and still sort games correctly — which would
+     mean the number should be read as a comparison, not a forecast. */
+  const runBands = [[0,7.5],[7.5,8.5],[8.5,9.5],[9.5,10.5],[10.5,99]]
+    .map(([lo,hi]) => ({ lo, hi, n:0, sumP:0, sumA:0 }));
 
   for(const q of preds){
     brier += Math.pow(q.p - (q.homeWon ? 1 : 0), 2);
@@ -1078,6 +1083,11 @@ function backtest(recencyW, useSP, regress, spWeight){
     if(favWon) right++;
     for(const b of bands){
       if(favP >= b.lo && favP < b.hi){ b.n++; b.sumP += favP; if(favWon) b.won++; break; }
+    }
+    for(const b of runBands){
+      if(q.projTotal >= b.lo && q.projTotal < b.hi){
+        b.n++; b.sumP += q.projTotal; b.sumA += q.actualTotal; break;
+      }
     }
     absErr += Math.abs(q.projTotal - q.actualTotal);
     bias += q.projTotal - q.actualTotal;
@@ -1088,6 +1098,11 @@ function backtest(recencyW, useSP, regress, spWeight){
   return {
     n, brier:brier / n, baseBrier:baseN ? baseBrier / baseN : null,
     acc:right / n, runMAE:absErr / n, runBias:bias / n, naiveMAE:naiveErr / n, spN,
+    runBands:runBands.filter(b => b.n > 20).map(b => ({
+      label:(b.lo === 0 ? "under 7.5" : b.hi === 99 ? "over 10.5"
+             : b.lo + "\u2013" + b.hi),
+      n:b.n, said:b.sumP / b.n, actual:b.sumA / b.n
+    })),
     bands:bands.filter(b => b.n > 0).map(b => ({
       label:Math.round(b.lo * 100) + "\u2013" + (b.hi > 1 ? "100" : Math.round(b.hi * 100)),
       n:b.n, said:b.sumP / b.n, actual:b.won / b.n
@@ -2541,6 +2556,24 @@ function calibrationBlock(){
           + 'On this evidence records, starters and bullpens are adding nothing you could '
           + 'not get from knowing who is at home.')
       + ' The favourite won ' + Math.round(c.acc * 100) + '% of the time.</p>'
+    + (c.runBands && c.runBands.length >= 3
+        ? '<h4 class="swhead">Does the run projection rank games?</h4>'
+          + '<div class="calhead"><span>Projected</span><span>Games</span><span>Actual</span></div>'
+          + c.runBands.map(b => '<div class="calrow"><span>' + b.label + '</span>'
+              + '<span>' + b.n + '</span>'
+              + '<span>' + b.actual.toFixed(1) + '</span></div>').join("")
+          + '<p>' + (() => {
+              const lo = c.runBands[0].actual, hi = c.runBands[c.runBands.length - 1].actual;
+              const spread = hi - lo;
+              return spread > 0.8
+                ? 'Games it projects high do score more \u2014 ' + lo.toFixed(1)
+                  + ' runs at the bottom against ' + hi.toFixed(1) + ' at the top. So it '
+                  + 'ranks games even though it cannot call one, which is why the card shows '
+                  + 'it against the league average rather than as a forecast.'
+                : 'The actual averages barely move across the bands, so it does not rank '
+                  + 'games either. On this evidence the number is not worth showing at all.';
+            })() + '</p>'
+        : "")
     + '<p>Run projections miss by <b>' + c.runMAE.toFixed(2) + '</b> runs on average. '
       + 'Simply predicting the league average every time misses by '
       + c.naiveMAE.toFixed(2) + '. '
@@ -2771,13 +2804,28 @@ function cardBlock(g){
       + '<span class="cbodds">' + american(favP) + '</span>'
     + '</div>'
     + (tot
-        ? '<div class="cbrow">'
-          + '<span class="cblabel">Runs</span>'
-          + '<span class="tbar" aria-hidden="true"></span>'
-          + '<span class="cbval"><b>' + tot.total.toFixed(1) + '</b> projected</span>'
-          + '<span class="cbodds sm">' + ab(g.aid) + ' ' + tot.away.toFixed(1)
-            + ' \u00b7 ' + ab(g.hid) + ' ' + tot.home.toFixed(1) + '</span>'
-          + '</div>'
+        ? (() => {
+            /* The informative part is the gap from average, not the number. The
+               projection misses a single game by about three and a half runs, so
+               "9.0" implies a precision it does not have; "0.1 above average"
+               is what it actually knows. */
+            const lgTot = tot.lg * 2;
+            const gap = tot.total - lgTot;
+            const word = Math.abs(gap) < 0.5 ? "about average"
+              : gap > 0 ? "+" + gap.toFixed(1) + " vs average"
+                        : gap.toFixed(1) + " vs average";
+            const err = S.cal && S.cal.with
+              ? ' \u00b1' + S.cal.with.runMAE.toFixed(1) + ' typical'
+              : "";
+            return '<div class="cbrow">'
+              + '<span class="cblabel">Runs</span>'
+              + '<span class="tbar" aria-hidden="true"></span>'
+              + '<span class="cbval"><b>' + tot.total.toFixed(1) + '</b> '
+                + esc(word) + '</span>'
+              + '<span class="cbodds sm">' + ab(g.aid) + ' ' + tot.away.toFixed(1)
+                + ' \u00b7 ' + ab(g.hid) + ' ' + tot.home.toFixed(1) + esc(err) + '</span>'
+              + '</div>';
+          })()
         : "")
     + (mu
         ? '<div class="cbrow">'
@@ -2814,7 +2862,10 @@ function renderPlays(){
       + '<p class="note">All three lines are this app\'s own output. Side is the model '
       + 'line. Runs is a projection: each club\'s scoring and its opponent\'s concession '
       + 'averaged, then shifted by how each starter compares to the league, scaled to the '
-      + 'six innings of nine a starter typically covers. <b>There is no over/under here</b> '
+      + 'six innings of nine a starter typically covers. It is shown against the league '
+      + 'average because that gap is the only part it knows with any confidence: measured '
+      + 'over the season it misses a single game by about three and a half runs, which is '
+      + 'no better than guessing the average every time. <b>There is no over/under here</b> '
       + '\u2014 that word needs a book\'s number to mean anything and this app has no '
       + 'source for one, so compare the projection to a line yourself. Watch is the best '
       + 'home run rate against the most homer-prone arm on the card, which is an '
