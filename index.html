@@ -418,7 +418,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "37 — series records from full season";
+const BUILD = "38 — three fixes: air threshold, rounding, plays after midnight";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -468,7 +468,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{standings:"AL", odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, hitterForm:{}, h2h:{}, series:{}, remaining:null, plays:[], playsState:"idle", recency:1, detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, hitterForm:{}, h2h:{}, series:{}, remaining:null, plays:[], playsState:"idle", playsDay:"today", recency:1, detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, seed:0, simBusy:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -484,7 +484,10 @@ const clock = t => new Date(t).toLocaleTimeString([], {hour:"numeric", minute:"2
 const dayName = t => new Date(t).toLocaleDateString([], {weekday:"short"});
 const pct = t => (t.w+t.l ? t.w/(t.w+t.l) : 0);
 const fmt3 = x => x.toFixed(3).replace(/^0/,"");
-const pc = p => p > .995 ? ">99" : p < .005 ? "<1" : String(Math.round(p*100));
+/* Inclusive bounds. At 5,000 sims a berth of exactly 4975 lands on .995,
+   and rounding that up printed "100" — a claim of certainty the simulation
+   never made. */
+const pc = p => p >= .995 ? ">99" : p <= .005 ? "<1" : String(Math.round(p*100));
 const left = t => Math.max(0, SEASON_GAMES - t.w - t.l);
 const gbTo = (t,o) => { const n = (o.w-t.w+(t.l-o.l))/2; return n <= 0 ? 0 : n; };
 const gbText = n => n === 0 ? "—" : n % 1 === 0 ? String(n) : n.toFixed(1);
@@ -855,8 +858,18 @@ async function loadSeason(){
 
    One request per game, chunked, and only when the tab is first opened. */
 async function loadPlays(){
-  const today = iso(new Date());
-  const targets = S.games.filter(g => g.date === today && (g.st === "live" || g.st === "final"));
+  /* Open the app at half past midnight and "today" is half an hour old, while
+     the games you actually watched are dated yesterday. So take today's games
+     if any have started, and last night's otherwise. */
+  const today = iso(new Date()), yday = iso(shiftDays(-1));
+  const started = g => g.st === "live" || g.st === "final";
+  let targets = S.games.filter(g => g.date === today && started(g));
+  let dayLabel = "today";
+  if(!targets.length){
+    targets = S.games.filter(g => g.date === yday && started(g));
+    dayLabel = "last night";
+  }
+  S.playsDay = dayLabel;
   if(!targets.length){ S.playsState = "ready"; return; }
 
   const best = {};   // club id -> its standout play today
@@ -1003,6 +1016,11 @@ async function loadWeather(venues){
    standard, so the percentage is honest physics on real inputs, not an
    invented "carry index". */
 const R_AIR = 287.058, RHO0 = 1.225;
+/* The sea-level standard is defined at 59F, so nearly every summer game sits
+   below it — a 97% threshold flagged fourteen of fifteen and told you only
+   that it was July. 90% is the level that actually separates altitude and
+   desert heat from ordinary warm weather. */
+const THIN_AIR = 90;
 function airPct(tempF, hPa){
   if(tempF == null || hPa == null) return null;
   const K = (tempF - 32) * 5/9 + 273.15;
@@ -1562,7 +1580,7 @@ function weatherStrip(g){
   const w = wxAt(g.venueId, g.start);
   if(!w && !roof) return "";
   const air = w && w.air != null
-    ? '<span class="wxbit' + (w.air <= 97 ? ' thin' : '') + '"><b>' + Math.round(w.air)
+    ? '<span class="wxbit' + (w.air <= THIN_AIR ? ' thin' : '') + '"><b>' + Math.round(w.air)
       + '%</b> air' + (w.elev != null && w.elev > 300 ? ' · ' + feet(w.elev).toLocaleString() + ' ft' : "")
       + '</span>'
     : "";
@@ -1915,7 +1933,7 @@ function renderToday(){
   // Thin air carries the ball: anything meaningfully below sea-level standard.
   const thin = mine.filter(g => {
     const w = wxAt(g.venueId, g.start);
-    return w && w.air != null && w.air <= 97;
+    return w && w.air != null && w.air <= THIN_AIR;
   }).length;
   const stakesToday = mine.filter(g => { const s = stakes(g); return s && s[0] !== "slate"; }).length;
 
@@ -2288,7 +2306,7 @@ function renderPlays(){
   if(!S.plays.length)
     return '<div class="pane"><div class="empty"><h3>Nothing to show yet</h3>'
       + '<p>Standout plays appear once games are under way. Nothing has been '
-      + 'played today so far.</p></div></div>';
+      + 'played today or last night.</p></div></div>';
 
   const flat = S.plays.some(p => p.idx > 0);
   return '<div class="pane">'
@@ -2297,7 +2315,7 @@ function renderPlays(){
     + '<div><b>' + S.plays.filter(p => p.live).length + '</b><span>still playing</span></div>'
     + '<div><b>' + S.plays.reduce((n,p) => n + p.rbi, 0) + '</b><span>runs driven in</span></div>'
     + '</div>'
-    + '<h2 class="eyebrow">Ranked by MLB\'s captivating index</h2>'
+    + '<h2 class="eyebrow">' + S.playsDay + ' \u00b7 ranked by MLB\'s captivating index</h2>'
     + S.plays.map((p, i) => '<article class="play">'
       + '<div class="playhead">'
         + '<span class="playrank">' + (i + 1) + '</span>'
