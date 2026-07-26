@@ -449,7 +449,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "43 — power block on one line per hitter";
+const BUILD = "45 — calibration tests the starter term";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -499,7 +499,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{standings:"AL", odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, plays:[], playsState:"idle", playsDay:"today", detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, spHistory:null, plays:[], playsState:"idle", playsDay:"today", detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, seed:0, simBusy:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -853,7 +853,8 @@ async function loadSeason(){
   let j;
   try{
     j = await getJSON(MLB + "/schedule?sportId=1&gameType=R"
-      + "&startDate=" + yr + "-03-01&endDate=" + yr + "-10-05");
+      + "&startDate=" + yr + "-03-01&endDate=" + yr + "-10-05"
+      + "&hydrate=probablePitcher");
   }catch(e){ return { h2h, series, remaining, runs, finals }; }
   for(const day of j.dates || []){
     for(const g of day.games || []){
@@ -870,7 +871,9 @@ async function loadSeason(){
         rh.rs += h.score; rh.ra += a.score; rh.g++;
         rv.rs += a.score; rv.ra += h.score; rv.g++;
         // Kept in full so the model can be replayed against them later.
-        finals.push({ date:g.officialDate || day.date, hid, aid, hs:h.score, as:a.score });
+        finals.push({ date:g.officialDate || day.date, hid, aid, hs:h.score, as:a.score,
+          hsp:(h.probablePitcher || {}).id || null,
+          asp:(a.probablePitcher || {}).id || null });
         if(h.score === a.score) continue;   // no winner to record below
         const k = h2hKey(hid, aid);
         const rec = h2h[k] || (h2h[k] = {});
@@ -897,6 +900,63 @@ async function loadSeason(){
    as the tie-break, which is at least a fact about the play.
 
    One request per game, chunked, and only when the tab is first opened. */
+/* Every starter who appeared this season, with their outings in date order.
+
+   This is what makes the starter term testable. Knowing who pitched is not
+   enough — the model would need his ERA *as it stood that day*, not today's.
+   The game logs give each appearance with a date, so a running ERA can be
+   rebuilt for any point in the season. Roughly 250 pitchers in batches of 40,
+   so about seven requests, once, on demand. */
+async function loadStarterHistory(){
+  const finals = S.finals;
+  if(!Array.isArray(finals)) return null;
+  const ids = [...new Set(finals.flatMap(f => [f.hsp, f.asp]).filter(Boolean))];
+  if(!ids.length) return null;                 // MLB kept no starters for past games
+
+  const yr = new Date().getFullYear();
+  const out = {};
+  const CHUNK = 40;
+  for(let i = 0; i < ids.length; i += CHUNK){
+    const batch = ids.slice(i, i + CHUNK);
+    let j;
+    try{
+      j = await getJSON(MLB + "/people?personIds=" + batch.join(",")
+        + "&hydrate=stats(group=pitching,type=gameLog,season=" + yr + ")");
+    }catch(e){ continue; }
+    for(const p of j.people || []){
+      const grp = (p.stats || []).find(s => Array.isArray(s.splits) && s.splits.length);
+      if(!grp) continue;
+      const log = [];
+      for(const sp of grp.splits){
+        const ip = inningsOf((sp.stat || {}).inningsPitched);
+        const er = Number((sp.stat || {}).earnedRuns);
+        if(!ip || isNaN(er)) continue;
+        log.push({ date:sp.date || (sp.game || {}).officialDate || "", ip, er });
+      }
+      log.sort((x, y) => x.date < y.date ? -1 : x.date > y.date ? 1 : 0);
+      // Cumulative, so an ERA before any date is a binary search away.
+      let ip = 0, er = 0;
+      for(const e of log){ ip += e.ip; er += e.er; e.cumIp = ip; e.cumEr = er; }
+      out[p.id] = log;
+    }
+    S.diag.spHistory = Object.keys(out).length;
+    render();
+  }
+  return out;
+}
+
+/* A starter's ERA using only what he had thrown before this date. */
+const SP_MIN_IP = 25;
+function eraBefore(pid, date){
+  const log = S.spHistory && S.spHistory[pid];
+  if(!log || !log.length) return null;
+  let lo = 0, hi = log.length;
+  while(lo < hi){ const m = (lo + hi) >> 1; if(log[m].date < date) lo = m + 1; else hi = m; }
+  if(lo === 0) return null;
+  const e = log[lo - 1];
+  return e.cumIp >= SP_MIN_IP ? 9 * e.cumEr / e.cumIp : null;
+}
+
 /* ---------------- calibration ----------------
    Replay the model over every completed game of the season and compare what it
    said to what happened.
@@ -911,7 +971,7 @@ async function loadSeason(){
    team-strength and home-field core — the foundation the rest sits on. */
 const BT_MIN_GP = 25;
 
-function backtest(recencyW){
+function backtest(recencyW, useSP){
   const games = S.finals;
   if(!Array.isArray(games) || games.length < 200) return null;
 
@@ -933,14 +993,27 @@ function backtest(recencyW){
              / (t.w + t.l + recencyW * ten.length + REGRESS);
       };
       const lg = p => Math.log(p / (1 - p));
-      const p = 1 / (1 + Math.exp(-(lg(rate(h)) - lg(rate(a)) + HFA)));
+      let d = lg(rate(h)) - lg(rate(a)) + HFA;
+      let spApplied = false;
+      if(useSP){
+        const hE = eraBefore(g.hsp, g.date), aE = eraBefore(g.asp, g.date);
+        if(hE != null && aE != null){
+          d += SP_WEIGHT * Math.max(-SP_CAP, Math.min(SP_CAP, aE - hE));
+          spApplied = true;
+        }
+      }
+      const p = 1 / (1 + Math.exp(-d));
 
       // No starters available historically, so the run projection is the
       // team-rate half of it only.
       const projTotal = (h.rs / hg + a.ra / ag) / 2 + (a.rs / ag + h.ra / hg) / 2;
 
       const homeWon = g.hs > g.as;
-      preds.push({ p, homeWon, projTotal, actualTotal:g.hs + g.as });
+      // The number any projection has to beat: just predict the league average.
+      let lgRuns = 0, lgG = 0;
+      for(const k in st){ lgRuns += st[k].rs; lgG += st[k].w + st[k].l; }
+      const lgTotal = lgG > 0 ? 2 * lgRuns / lgG : 9;
+      preds.push({ p, homeWon, projTotal, lgTotal, actualTotal:g.hs + g.as, spApplied });
 
       // Baseline to beat: home field and nothing else.
       baseBrier += Math.pow(0.540 - (homeWon ? 1 : 0), 2);
@@ -958,7 +1031,7 @@ function backtest(recencyW){
 
   if(!preds.length) return null;
 
-  let brier = 0, right = 0, absErr = 0, bias = 0;
+  let brier = 0, right = 0, absErr = 0, bias = 0, naiveErr = 0, spN = 0;
   const bands = [[.50,.55],[.55,.60],[.60,.65],[.65,.70],[.70,1.01]]
     .map(([lo,hi]) => ({ lo, hi, n:0, sumP:0, won:0 }));
 
@@ -972,11 +1045,13 @@ function backtest(recencyW){
     }
     absErr += Math.abs(q.projTotal - q.actualTotal);
     bias += q.projTotal - q.actualTotal;
+    naiveErr += Math.abs(q.lgTotal - q.actualTotal);
+    if(q.spApplied) spN++;
   }
   const n = preds.length;
   return {
     n, brier:brier / n, baseBrier:baseN ? baseBrier / baseN : null,
-    acc:right / n, runMAE:absErr / n, runBias:bias / n,
+    acc:right / n, runMAE:absErr / n, runBias:bias / n, naiveMAE:naiveErr / n, spN,
     bands:bands.filter(b => b.n > 0).map(b => ({
       label:Math.round(b.lo * 100) + "\u2013" + (b.hi > 1 ? "100" : Math.round(b.hi * 100)),
       n:b.n, said:b.sumP / b.n, actual:b.won / b.n
@@ -2377,20 +2452,43 @@ function calibrationBlock(){
         ? 'The model beats a home-field-only baseline: Brier score '
           + c.brier.toFixed(4) + ' against ' + c.baseBrier.toFixed(4) + '. Lower is better.'
         : 'The model does <b>not</b> beat a home-field-only baseline: Brier '
-          + c.brier.toFixed(4) + ' against ' + c.baseBrier.toFixed(4) + '. On this evidence '
-          + 'the extra machinery is not earning its place.')
+          + c.brier.toFixed(4) + ' against ' + c.baseBrier.toFixed(4) + '. Read the bands '
+          + 'above: its most confident calls do no better than its least confident ones. '
+          + 'On this evidence records, starters and bullpens are adding nothing you could '
+          + 'not get from knowing who is at home.')
       + ' The favourite won ' + Math.round(c.acc * 100) + '% of the time.</p>'
-    + '<p>Run projections miss by <b>' + c.runMAE.toFixed(2) + '</b> runs on average, '
-      + (Math.abs(c.runBias) < .15 ? 'with no meaningful bias'
-          : c.runBias > 0 ? 'and run <b>' + c.runBias.toFixed(2) + '</b> too high'
-                          : 'and run <b>' + Math.abs(c.runBias).toFixed(2) + '</b> too low')
-      + '. Historical starters are not available, so this tests the team-rate half only.</p>'
+    + '<p>Run projections miss by <b>' + c.runMAE.toFixed(2) + '</b> runs on average. '
+      + 'Simply predicting the league average every time misses by '
+      + c.naiveMAE.toFixed(2) + '. '
+      + (c.runMAE < c.naiveMAE - 0.05
+          ? 'So the projection is doing some work.'
+          : c.runMAE > c.naiveMAE + 0.05
+            ? '<b>So it is worse than a flat guess.</b>'
+            : '<b>So it is no better than a flat guess</b> \u2014 game totals are '
+              + 'dominated by things no season rate can see.')
+      + (Math.abs(c.runBias) < .15 ? ' No meaningful bias.'
+          : c.runBias > 0 ? ' It runs ' + c.runBias.toFixed(2) + ' too high.'
+                          : ' It runs ' + Math.abs(c.runBias).toFixed(2) + ' too low.')
+      + ' Historical starters are not available, so this tests the team-rate half only.</p>'
+    + (S.cal.withSP && S.cal.withSP.spN > 200
+        ? '<p>' + (S.cal.withSP.spN.toLocaleString()) + ' of those games had both starters '
+          + 'on file with enough innings to judge. Adding the starter term: Brier '
+          + S.cal.withSP.brier.toFixed(4) + ' against ' + c.brier.toFixed(4) + ' without. '
+          + (S.cal.withSP.brier < c.brier - 5e-5
+              ? '<b>Starters help.</b> That is the piece worth keeping and refining.'
+              : S.cal.withSP.brier > c.brier + 5e-5
+                ? '<b>Starters make it worse</b> as weighted here \u2014 SP_WEIGHT is too high.'
+                : 'No measurable difference, so the starter term is not earning its place '
+                  + 'either.') + '</p>'
+        : '<p>Starters could not be tested: MLB did not return a probable pitcher for '
+          + 'enough completed games, or too few had the innings to judge.</p>')
     + '<p class="caveat">Recent form weighting: Brier ' + c.brier.toFixed(4)
       + ' with it, ' + c0.brier.toFixed(4) + ' without. '
-      + (c.brier < c0.brier ? 'Counting the last ten twice helps, slightly.'
-         : c.brier > c0.brier ? 'Counting the last ten twice makes it <b>worse</b>. '
-           + 'That is worth knowing \u2014 set RECENCY_W to 0 and this improves.'
-         : 'No measurable difference either way.')
+      + (Math.abs(c.brier - c0.brier) < 5e-5
+          ? 'Identical to four decimal places \u2014 counting the last ten twice makes '
+            + 'no measurable difference at all.'
+          : c.brier < c0.brier ? 'Counting the last ten twice helps, marginally.'
+            : 'Counting the last ten twice makes it <b>worse</b>. Set RECENCY_W to 0.')
       + ' Starters and bullpens are untested: that would need the probable pitcher for '
       + 'every historical game, one request each.</p>'
     + '</div>';
@@ -2439,10 +2537,10 @@ function renderOdds(){
     + 'starter\'s last three outings, twice over. Earned runs and wins are re-weighted '
     + 'rather than two averages blended, so the arithmetic stays honest even though the '
     + 'weight itself is a judgement.</p>'
-    + '<p class="caveat">And it is a judgement: none of these weights have been fitted '
-    + 'against results. A hot fortnight feels more predictive than it is. Still not in the '
-    + 'model at all: run differential, injuries and trades. Read gaps of a few points as '
-    + 'noise.</p>'
+    + '<p class="caveat">And it is a judgement: none of these weights were fitted against '
+    + 'results. Run the calibration test below before trusting any of it \u2014 when I did, '
+    + 'the model failed to beat simply knowing who was at home. Still not in it at all: '
+    + 'run differential, injuries and trades.</p>'
     + '<div class="mrow"><span>' + SIMS.toLocaleString() + ' seasons</span>'
     + '<button class="btn" id="rerun"' + (S.simBusy?" disabled":"") + '>'
     + (S.simBusy ? "Simulating…" : "Run it again") + '</button></div></div></div>';
@@ -2595,6 +2693,10 @@ function renderPlays(){
     ? '<h2 class="eyebrow">Today\'s card \u00b7 ' + upcoming.length + ' games</h2>'
       + (waiting ? '<p class="load">Loading starters\u2026</p>' : "")
       + upcoming.map(cardBlock).join("")
+      + '<p class="note"><b>Test these before trusting them.</b> The calibration on the '
+      + 'Odds tab replays the side model over every completed game this season; when I ran '
+      + 'it, it did not beat simply backing the home team. Treat what follows as a view, '
+      + 'not a signal.</p>'
       + '<p class="note">All three lines are this app\'s own output. Side is the model '
       + 'line. Runs is a projection: each club\'s scoring and its opponent\'s concession '
       + 'averaged, then shifted by how each starter compares to the league, scaled to the '
@@ -2684,7 +2786,7 @@ function render(resetScroll){
     + 'Odds simulated in this browser from the records above.<br>'
     + 'Build ' + BUILD
     + (Object.keys(S.diag).length
-        ? '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","hitters","hitterForm","plays"]
+        ? '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","spHistory","hitters","hitterForm","plays"]
             .filter(k => S.diag[k] != null)
             .map(k => k + ' ' + S.diag[k]).join(' \u00b7 ')
         : "")
@@ -2745,11 +2847,16 @@ document.addEventListener("click", e => {
 
   if(e.target.closest("#runCal")){
     S.calBusy = true; render();
-    setTimeout(() => {
-      S.cal = { with:backtest(RECENCY_W), without:backtest(0) };
+    (async () => {
+      if(!S.spHistory) S.spHistory = await loadStarterHistory() || {};
+      S.cal = {
+        with:backtest(RECENCY_W, false),
+        without:backtest(0, false),
+        withSP:backtest(RECENCY_W, true)
+      };
       if(!S.cal.with) S.cal = null;
       S.calBusy = false; render();
-    }, 20);
+    })();
     return;
   }
 
