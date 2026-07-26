@@ -429,7 +429,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "40 — Plays tab: side, projected runs, matchup";
+const BUILD = "41 — card fixes: names, rounding";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -908,7 +908,10 @@ function projectTotal(g){
     usedSP = true;
   }
   expH = Math.max(1, expH); expA = Math.max(1, expA);
-  return { home:expH, away:expA, total:expH + expA, usedSP, lg };
+  /* Round the two sides first and derive the total from them, so the card
+     never shows parts that fail to add up to the whole. */
+  const h1 = Math.round(expH * 10) / 10, a1 = Math.round(expA * 10) / 10;
+  return { home:h1, away:a1, total:Math.round((h1 + a1) * 10) / 10, usedSP, lg };
 }
 
 /* The bat most likely to matter: best home run rate against the most
@@ -1370,6 +1373,22 @@ function simulate(sims, tweak){
    over. Modest on purpose. A hot fortnight feels more predictive than it is,
    and over-weighting it is the usual way to make a forecast worse. */
 const RECENCY_W = 1;   // the recent stretch counts twice over, not more
+
+/* Surnames only where space is tight. Two awkward cases: compound names like
+   "De La Cruz", which need the particles kept, and suffixes like "Jr." which
+   must be dropped first or they become the whole name. */
+function lastName(full){
+  if(!full) return "";
+  let parts = String(full).trim().split(/\s+/);
+  const suffix = [];
+  while(parts.length > 1 && /^(jr\.?|sr\.?|i{2,3}|iv|v)$/i.test(parts[parts.length - 1])){
+    suffix.unshift(parts.pop());
+  }
+  if(parts.length < 2) return [parts[0] || "", ...suffix].join(" ").trim();
+  let i = parts.length - 1;
+  while(i > 0 && /^(de|del|la|le|van|von|da|dos|di)$/i.test(parts[i-1])) i--;
+  return [...parts.slice(i), ...suffix].join(" ");
+}
 
 const pairOf = s => {
   if(!s) return null;
@@ -2390,9 +2409,9 @@ function cardBlock(g){
         ? '<div class="cbrow">'
           + '<span class="cblabel">Watch</span>'
           + '<span class="tbar" style="background:' + col(mu.team) + '" aria-hidden="true"></span>'
-          + '<span class="cbval">' + esc(mu.batter) + ' <em>1 per '
+          + '<span class="cbval">' + esc(lastName(mu.batter)) + ' <em>1 per '
             + Math.round(mu.perPA) + ' PA</em></span>'
-          + '<span class="cbodds sm">v ' + esc((mu.pitcher || "").split(" ").slice(-1)[0])
+          + '<span class="cbodds sm">v ' + esc(lastName(mu.pitcher))
             + ' ' + mu.hr9.toFixed(1) + ' HR/9</span>'
           + '</div>'
         : "")
