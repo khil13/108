@@ -313,6 +313,25 @@ ul{margin:0;padding:0;list-style:none;}
 .obar i{display:block;height:6px;border-radius:3px;flex:0 0 auto;max-width:42px;}
 .obar em{font-style:normal;font-family:var(--mono);font-size:12px;margin-left:auto;}
 
+.cardblk{background:var(--deep);border:1px solid var(--line);border-radius:5px;
+  padding:11px 13px 10px;margin-top:10px;}
+.cbhead{display:flex;align-items:baseline;gap:10px;padding-bottom:8px;
+  border-bottom:1px solid var(--line);margin-bottom:8px;}
+.cbteams{font-family:var(--display);font-size:16px;letter-spacing:.03em;color:var(--chalk);}
+.cbtime{margin-left:auto;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:#738E93;}
+.cbrow{display:grid;grid-template-columns:46px 3px 1fr auto;gap:9px;align-items:center;
+  padding:4px 0;}
+.cblabel{font-family:var(--mono);font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:#738E93;}
+.cbval{font-size:13px;color:var(--chalk);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cbval b{font-family:var(--display);font-size:15px;font-weight:400;letter-spacing:.03em;}
+.cbval em{font-style:normal;font-family:var(--mono);font-size:10px;color:#738E93;}
+.cbodds{font-family:var(--mono);font-size:12px;color:var(--bulb);white-space:nowrap;}
+.cbodds.sm{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#738E93;}
+.cbwx{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:#738E93;}
 .play{background:var(--deep);border:1px solid var(--line);border-radius:5px;
   padding:11px 13px;margin-top:9px;}
 .playhead{display:grid;grid-template-columns:20px 3px auto 1fr auto;gap:9px;align-items:center;}
@@ -323,14 +342,6 @@ ul{margin:0;padding:0;list-style:none;}
   color:#738E93;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .playidx{font-family:var(--mono);font-size:12px;color:var(--bulb);}
 .playdesc{margin-top:8px;font-size:13px;line-height:1.5;color:var(--chalk);}
-.recency{background:var(--deep);border:1px solid var(--line);border-radius:4px;
-  padding:12px 13px;margin-bottom:16px;}
-.rectoggle{display:flex;gap:1px;background:var(--line);border:1px solid var(--line);
-  border-radius:4px;overflow:hidden;margin:9px 0;}
-.rectoggle button{flex:1;background:var(--night);padding:9px;font-family:var(--mono);
-  font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--slate);}
-.rectoggle button.on{background:var(--panel);color:var(--bulb);}
-.recency p{font-size:12px;line-height:1.55;color:#738E93;}
 .method{margin-top:26px;padding:15px;border:1px solid var(--line);border-radius:5px;background:var(--deep);}
 .method h4{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
   color:var(--bulb);margin-bottom:9px;}
@@ -418,7 +429,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "38 — three fixes: air threshold, rounding, plays after midnight";
+const BUILD = "40 — Plays tab: side, projected runs, matchup";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -468,7 +479,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{standings:"AL", odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, hitterForm:{}, h2h:{}, series:{}, remaining:null, plays:[], playsState:"idle", playsDay:"today", recency:1, detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, hitterForm:{}, h2h:{}, series:{}, runs:{}, remaining:null, plays:[], playsState:"idle", playsDay:"today", detailState:"idle", wxAt:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, seed:0, simBusy:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -818,12 +829,12 @@ const h2hKey = (a, b) => (a < b ? a + "-" + b : b + "-" + a);
 
 async function loadSeason(){
   const yr = new Date().getFullYear();
-  const h2h = {}, series = {}, remaining = [];
+  const h2h = {}, series = {}, remaining = [], runs = {};
   let j;
   try{
     j = await getJSON(MLB + "/schedule?sportId=1&gameType=R"
       + "&startDate=" + yr + "-03-01&endDate=" + yr + "-10-05");
-  }catch(e){ return { h2h, series, remaining }; }
+  }catch(e){ return { h2h, series, remaining, runs }; }
   for(const day of j.dates || []){
     for(const g of day.games || []){
       const h = (g.teams || {}).home || {}, a = (g.teams || {}).away || {};
@@ -832,7 +843,13 @@ async function loadSeason(){
       const st = (g.status || {}).abstractGameState;
       const det = (g.status || {}).detailedState || "";
       if(st === "Final"){
-        if(h.score == null || a.score == null || h.score === a.score) continue;
+        if(h.score == null || a.score == null) continue;
+        // Runs count from every finished game, ties included.
+        const rh = runs[hid] || (runs[hid] = { rs:0, ra:0, g:0 });
+        const rv = runs[aid] || (runs[aid] = { rs:0, ra:0, g:0 });
+        rh.rs += h.score; rh.ra += a.score; rh.g++;
+        rv.rs += a.score; rv.ra += h.score; rv.g++;
+        if(h.score === a.score) continue;   // no winner to record below
         const k = h2hKey(hid, aid);
         const rec = h2h[k] || (h2h[k] = {});
         const winner = h.score > a.score ? hid : aid;
@@ -847,7 +864,7 @@ async function loadSeason(){
       }
     }
   }
-  return { h2h, series, remaining };
+  return { h2h, series, remaining, runs };
 }
 
 /* ---------------- plays of the day ----------------
@@ -857,6 +874,64 @@ async function loadSeason(){
    as the tie-break, which is at least a fact about the play.
 
    One request per game, chunked, and only when the tab is first opened. */
+/* ---------------- projected total ----------------
+   A run estimate, not a betting line. Each side's expectation is the midpoint
+   of what it scores and what its opponent allows, then shifted by how the
+   starter compares to the league — scaled to the share of a game a starter
+   covers, about six innings of nine.
+
+   There is deliberately no over/under here. That word only means something
+   against a book's number, and this app has no source for one. What follows is
+   a projection you can compare to a line yourself. */
+const SP_SHARE = 0.6;
+
+function teamRuns(id){
+  const r = S.runs[id];
+  return r && r.g > 0 ? { rs:r.rs / r.g, ra:r.ra / r.g, g:r.g } : null;
+}
+function leagueRunsPerGame(){
+  let rs = 0, g = 0;
+  for(const k in S.runs){ rs += S.runs[k].rs; g += S.runs[k].g; }
+  return g > 0 ? rs / g : null;
+}
+
+function projectTotal(g){
+  const h = teamRuns(g.hid), a = teamRuns(g.aid), lg = leagueRunsPerGame();
+  if(!h || !a || !lg) return null;
+  let expH = (h.rs + a.ra) / 2, expA = (a.rs + h.ra) / 2;
+  const hEra = starterEra(S.pitchers[g.hProbId]);
+  const aEra = starterEra(S.pitchers[g.aProbId]);
+  let usedSP = false;
+  if(hEra != null && aEra != null){
+    expH += SP_SHARE * (aEra - lg);      // the arm you face, not your own
+    expA += SP_SHARE * (hEra - lg);
+    usedSP = true;
+  }
+  expH = Math.max(1, expH); expA = Math.max(1, expA);
+  return { home:expH, away:expA, total:expH + expA, usedSP, lg };
+}
+
+/* The bat most likely to matter: best home run rate against the most
+   homer-prone arm on the card. An observation about who is involved, not a
+   prediction that it happens. */
+function bestMatchup(g){
+  let best = null;
+  const consider = (batTeam, oppPid) => {
+    const p = S.pitchers[oppPid];
+    if(!p || p.hr9 == null) return;
+    for(const b of (S.hitters[batTeam] || []).slice(0, 5)){
+      if(!b.perPA) continue;
+      const score = (1 / b.perPA) * p.hr9;
+      if(!best || score > best.score)
+        best = { score, batter:b.name, team:batTeam, perPA:b.perPA,
+                 hr:b.hr, pitcher:p.name, hr9:p.hr9 };
+    }
+  };
+  consider(g.aid, g.hProbId);
+  consider(g.hid, g.aProbId);
+  return best;
+}
+
 async function loadPlays(){
   /* Open the app at half past midnight and "today" is half an hour old, while
      the games you actually watched are dated yesterday. So take today's games
@@ -1152,6 +1227,7 @@ async function ensureSeason(){
   const season = await loadSeason();
   S.h2h = season.h2h;
   S.series = season.series;
+  S.runs = season.runs;
   S.remaining = season.remaining;
   S.diag.h2h = Object.keys(S.h2h).length;
   S.diag.remaining = season.remaining.length;
@@ -1288,16 +1364,12 @@ function simulate(sims, tweak){
 
 /* ---------------- recency ----------------
    Recent form is already inside the season figures, so weighting it means
-   counting those games more than once. RECENCY_K is how many extra times: 0
-   ignores form, 1 counts the recent stretch twice over, 2 three times.
+   counting those games more than once. RECENCY_W is how many extra times.
 
-   It is a control rather than a constant because nothing here is fitted. A hot
-   fortnight feels more predictive than it is, and over-weighting it is the
-   usual way to make a forecast worse — so the app shows you the dial instead
-   of choosing for you. */
-const RECENCY_K = [0, 1, 2];
-const RECENCY_LABEL = ["Season only", "Recent form counts", "Recent form counts double"];
-const RECENCY_KEY = "108.recency";
+   Set to 1: a club's last ten and a starter's last three outings count twice
+   over. Modest on purpose. A hot fortnight feels more predictive than it is,
+   and over-weighting it is the usual way to make a forecast worse. */
+const RECENCY_W = 1;   // the recent stretch counts twice over, not more
 
 const pairOf = s => {
   if(!s) return null;
@@ -1308,8 +1380,8 @@ const pairOf = s => {
 /* A club's true rate: season record, plus its last ten counted again K times,
    then regressed toward .500. */
 function teamRate(t){
-  const k = RECENCY_K[S.recency] || 0;
-  const ten = k ? pairOf(t.l10) : null;
+  const k = RECENCY_W;
+  const ten = pairOf(t.l10);
   const addW = ten ? k * ten.w : 0;
   const addG = ten ? k * (ten.w + ten.l) : 0;
   return (t.w + addW + REGRESS / 2) / (t.w + t.l + addG + REGRESS);
@@ -1320,8 +1392,8 @@ function teamRate(t){
    is over actual runs rather than an average of two averages. */
 function starterEra(p){
   if(!p || p.era == null) return null;
-  const k = RECENCY_K[S.recency] || 0;
-  if(!k || !p.form || !p.ip) return p.era;
+  const k = RECENCY_W;
+  if(!p.form || !p.ip) return p.era;
   const seasonER = p.era * p.ip / 9;
   const recentER = p.form.era * p.form.ip / 9;
   const ip = p.ip + k * p.form.ip;
@@ -2150,23 +2222,6 @@ function renderOdds(){
   const all = list();
   const n = f => all.filter(f).length;
   return '<div class="pane">'
-    + '<div class="recency">'
-      + '<h5 class="plabel">How much should recent form count?</h5>'
-      + '<div class="rectoggle">'
-      + RECENCY_LABEL.map((lab,i) => '<button data-recency="' + i + '"'
-          + ' aria-pressed="' + (S.recency === i) + '"'
-          + ' class="' + (S.recency === i ? "on" : "") + '">'
-          + ["None","Some","Double"][i] + '</button>').join("")
-      + '</div>'
-      + '<p>' + RECENCY_LABEL[S.recency]
-        + (S.recency === 0
-            ? ' — the last ten games get no extra weight beyond being part of the record.'
-            : S.recency === 1
-              ? ' — a club\'s last ten and a starter\'s last three outings are counted twice.'
-              : ' — counted three times. Deliberately more than the evidence supports, so you '
-                + 'can see how far a hot streak can push the numbers.')
-        + '</p>'
-    + '</div>'
     + '<div class="ledger">'
     + '<div><b>' + n(t => o[t.id].berth > .9) + '</b><span>near locks</span></div>'
     + '<div><b>' + n(t => o[t.id].berth > .02 && o[t.id].berth <= .9) + '</b><span>live in the race</span></div>'
@@ -2200,9 +2255,9 @@ function renderOdds(){
     + 'ninetieth percentile — rather than a single average, because the average hides how '
     + 'wide the real spread still is. Tap a club for the full band and its median.</p>'
     + '<p>Recent form is folded in by counting a club\'s last ten games, and a '
-    + 'starter\'s last three outings, more than once — the control above sets how many '
-    + 'times. Earned runs and wins are re-weighted, not two averages blended, so the '
-    + 'arithmetic stays honest even if the weight is a judgement.</p>'
+    + 'starter\'s last three outings, twice over. Earned runs and wins are re-weighted '
+    + 'rather than two averages blended, so the arithmetic stays honest even though the '
+    + 'weight itself is a judgement.</p>'
     + '<p class="caveat">And it is a judgement: none of these weights have been fitted '
     + 'against results. A hot fortnight feels more predictive than it is. Still not in the '
     + 'model at all: run differential, injuries and trades. Read gaps of a few points as '
@@ -2300,42 +2355,103 @@ function focusKey(el){
   return null;
 }
 
-function renderPlays(){
-  if(S.playsState === "loading" && !S.plays.length)
-    return '<div class="pane"><p class="load">Reading play-by-play…</p></div>';
-  if(!S.plays.length)
-    return '<div class="pane"><div class="empty"><h3>Nothing to show yet</h3>'
-      + '<p>Standout plays appear once games are under way. Nothing has been '
-      + 'played today or last night.</p></div></div>';
+/* One block per upcoming game: which side the model prefers, how many runs it
+   projects, and the standout matchup. All three are this app's own output. */
+function cardBlock(g){
+  const pr = project(g), tot = projectTotal(g), mu = bestMatchup(g);
+  if(!pr) return "";
+  const favId = pr.pHome >= pr.pAway ? g.hid : g.aid;
+  const favP = Math.max(pr.pHome, pr.pAway);
+  const wx = wxAt(g.venueId, g.start);
+  const v = S.venues[g.venueId];
+  const rel = wx ? windRelative(wx.dir, cfBearing((v && v.name) || g.venue)) : null;
 
-  const flat = S.plays.some(p => p.idx > 0);
-  return '<div class="pane">'
-    + '<div class="ledger">'
-    + '<div><b>' + S.plays.length + '</b><span>clubs with a play</span></div>'
-    + '<div><b>' + S.plays.filter(p => p.live).length + '</b><span>still playing</span></div>'
-    + '<div><b>' + S.plays.reduce((n,p) => n + p.rbi, 0) + '</b><span>runs driven in</span></div>'
+  return '<article class="cardblk">'
+    + '<header class="cbhead">'
+      + '<span class="cbteams">' + ab(g.aid) + ' at ' + ab(g.hid) + '</span>'
+      + '<span class="cbtime">' + dayName(g.start) + ' ' + clock(g.start) + '</span>'
+    + '</header>'
+    + '<div class="cbrow">'
+      + '<span class="cblabel">Side</span>'
+      + '<span class="tbar" style="background:' + col(favId) + '" aria-hidden="true"></span>'
+      + '<span class="cbval"><b>' + ab(favId) + '</b> ' + Math.round(favP * 100) + '%</span>'
+      + '<span class="cbodds">' + american(favP) + '</span>'
     + '</div>'
-    + '<h2 class="eyebrow">' + S.playsDay + ' \u00b7 ranked by MLB\'s captivating index</h2>'
-    + S.plays.map((p, i) => '<article class="play">'
-      + '<div class="playhead">'
-        + '<span class="playrank">' + (i + 1) + '</span>'
-        + '<span class="tbar" style="background:' + col(p.club) + '" aria-hidden="true"></span>'
-        + '<button class="playclub" data-team="' + p.club + '">' + ab(p.club) + '</button>'
-        + '<span class="playmeta">vs ' + ab(p.opp) + ' · '
-          + (p.top ? "T" : "B") + p.inning
-          + (p.rbi ? ' · ' + p.rbi + ' RBI' : "")
-          + (p.live ? ' · live' : "") + '</span>'
-        + (p.idx > 0 ? '<span class="playidx">' + p.idx + '</span>' : "")
-      + '</div>'
-      + '<p class="playdesc">' + esc(p.desc) + '</p>'
-      + '</article>').join("")
-    + '<p class="note">The captivating index is MLB\'s own rating of a play, not '
-    + 'something computed here — so the order is their judgement of what mattered. '
-    + (flat ? '' : 'It is reading as zero across the board today, so these are ranked by '
-        + 'runs driven in instead. ')
-    + 'One play per club, the highest-rated thing they did while batting. Defensive '
-    + 'plays are not attributed to a club this way and so are not listed.</p>'
-    + '</div>';
+    + (tot
+        ? '<div class="cbrow">'
+          + '<span class="cblabel">Runs</span>'
+          + '<span class="tbar" aria-hidden="true"></span>'
+          + '<span class="cbval"><b>' + tot.total.toFixed(1) + '</b> projected</span>'
+          + '<span class="cbodds sm">' + ab(g.aid) + ' ' + tot.away.toFixed(1)
+            + ' \u00b7 ' + ab(g.hid) + ' ' + tot.home.toFixed(1) + '</span>'
+          + '</div>'
+        : "")
+    + (mu
+        ? '<div class="cbrow">'
+          + '<span class="cblabel">Watch</span>'
+          + '<span class="tbar" style="background:' + col(mu.team) + '" aria-hidden="true"></span>'
+          + '<span class="cbval">' + esc(mu.batter) + ' <em>1 per '
+            + Math.round(mu.perPA) + ' PA</em></span>'
+          + '<span class="cbodds sm">v ' + esc((mu.pitcher || "").split(" ").slice(-1)[0])
+            + ' ' + mu.hr9.toFixed(1) + ' HR/9</span>'
+          + '</div>'
+        : "")
+    + (wx
+        ? '<p class="cbwx">' + Math.round(wx.temp) + '\u00b0 \u00b7 '
+          + Math.round(wx.wind) + ' mph ' + (rel || "from " + compass(wx.dir))
+          + (wx.air != null ? ' \u00b7 ' + Math.round(wx.air) + '% air' : "") + '</p>'
+        : "")
+    + '</article>';
+}
+
+function renderPlays(){
+  const today = iso(new Date());
+  const upcoming = S.games.filter(g => g.date === today && g.st === "sched")
+    .sort((a,b) => new Date(a.start) - new Date(b.start));
+  const waiting = S.detailState === "loading" || !Object.keys(S.pitchers).length;
+
+  const card = upcoming.length
+    ? '<h2 class="eyebrow">Today\'s card \u00b7 ' + upcoming.length + ' games</h2>'
+      + (waiting ? '<p class="load">Loading starters\u2026</p>' : "")
+      + upcoming.map(cardBlock).join("")
+      + '<p class="note">All three lines are this app\'s own output. Side is the model '
+      + 'line. Runs is a projection: each club\'s scoring and its opponent\'s concession '
+      + 'averaged, then shifted by how each starter compares to the league, scaled to the '
+      + 'six innings of nine a starter typically covers. <b>There is no over/under here</b> '
+      + '\u2014 that word needs a book\'s number to mean anything and this app has no '
+      + 'source for one, so compare the projection to a line yourself. Watch is the best '
+      + 'home run rate against the most homer-prone arm on the card, which is an '
+      + 'observation about who is involved rather than a claim it will happen. Lineups are '
+      + 'not published until a few hours before first pitch, so none of this knows who is '
+      + 'actually playing.</p>'
+    : "";
+
+  const done = S.plays.length
+    ? '<h2 class="eyebrow">' + S.playsDay + ' \u00b7 ranked by MLB\'s captivating index</h2>'
+      + S.plays.map((p, i) => '<article class="play">'
+        + '<div class="playhead">'
+          + '<span class="playrank">' + (i + 1) + '</span>'
+          + '<span class="tbar" style="background:' + col(p.club) + '" aria-hidden="true"></span>'
+          + '<button class="playclub" data-team="' + p.club + '">' + ab(p.club) + '</button>'
+          + '<span class="playmeta">vs ' + ab(p.opp) + ' \u00b7 '
+            + (p.top ? "T" : "B") + p.inning
+            + (p.rbi ? ' \u00b7 ' + p.rbi + ' RBI' : "")
+            + (p.live ? ' \u00b7 live' : "") + '</span>'
+          + (p.idx > 0 ? '<span class="playidx">' + p.idx + '</span>' : "")
+        + '</div>'
+        + '<p class="playdesc">' + esc(p.desc) + '</p>'
+        + '</article>').join("")
+      + '<p class="note">The captivating index is MLB\'s own rating of a play, not '
+      + 'something computed here. One play per club, the highest-rated thing they did '
+      + 'while batting.</p>'
+    : (S.playsState === "loading" ? '<p class="load">Reading play-by-play\u2026</p>' : "");
+
+  if(!card && !done)
+    return '<div class="pane"><div class="empty"><h3>Nothing to show yet</h3>'
+      + '<p>Projections appear once starters are announced, and standout plays once '
+      + 'games are under way.</p></div></div>';
+
+  return '<div class="pane">' + card + (card && done ? SEAM : "") + done + '</div>';
 }
 
 function render(resetScroll){
@@ -2427,7 +2543,7 @@ document.addEventListener("click", e => {
   if(tab){
     S.tab = tab.dataset.tab;
     if(S.tab === "odds") ensureSeason();   // the forecast wants the real fixture list
-    if(S.tab === "plays") ensurePlays();
+    if(S.tab === "plays"){ ensurePlays(); ensureSeason(); loadDetail(); }
     render(true);
     return;
   }
@@ -2442,15 +2558,6 @@ document.addEventListener("click", e => {
     const pk = tog.dataset.toggle;
     S.open[pk] = !S.open[pk];
     if(S.open[pk]){ loadDetail(); ensureHitterForm(); }
-    render();
-    return;
-  }
-
-  const rec = e.target.closest("[data-recency]");
-  if(rec){
-    S.recency = Number(rec.dataset.recency);
-    try{ localStorage.setItem(RECENCY_KEY, String(S.recency)); }catch(err){}
-    S.odds = simulate(SIMS);        // strength changed, so the whole forecast does
     render();
     return;
   }
@@ -2535,10 +2642,6 @@ document.addEventListener("visibilitychange", () => {
   if(!document.hidden && S.at && Date.now() - S.at.getTime() > 60000) load();
 });
 
-try{
-  const r = Number(localStorage.getItem(RECENCY_KEY));
-  if(r === 0 || r === 1 || r === 2) S.recency = r;
-}catch(e){}
 S.follow = loadFollow();
 S.baseline = loadBaseline();
 
