@@ -370,6 +370,8 @@ ul{margin:0;padding:0;list-style:none;}
 .fitem.mine{border-left:3px solid var(--bulb);}
 .fitem.big{padding:12px 13px 13px;}
 .fbody{min-width:0;}
+.avwrap{display:flex;flex-direction:column;align-items:center;gap:3px;flex:0 0 auto;}
+.avpos{font-family:var(--mono);font-size:8px;letter-spacing:.1em;color:#738E93;}
 .av{display:flex;align-items:center;justify-content:center;width:30px;height:30px;
   border-radius:50%;border:1.5px solid;background:#0B1618;font-family:var(--mono);
   font-size:10.5px;letter-spacing:.02em;flex:0 0 auto;}
@@ -521,7 +523,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "66 — feed avatars";
+const BUILD = "68 — scorecard settles from season results";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -1276,6 +1278,26 @@ function recordPrediction(g){
    window covers the last two days, which is where yesterday's games are. */
 function settleScorecard(){
   let changed = false;
+
+  /* The season's completed games, keyed by date and club pair. The schedule
+     window only spans four days, so without this any prediction older than that
+     could never be settled — go away for a week and the whole card orphans. */
+  const byPair = {};
+  if(Array.isArray(S.finals))
+    for(const f of S.finals){
+      if(!f || !f.date || f.hs == null || f.as == null) continue;
+      byPair[f.date + ":" + f.hid + ":" + f.aid] = f;
+    }
+
+  for(const key in S.card){
+    const e = S.card[key];
+    if(!e || e.hs != null || !e.date) continue;
+    const f = byPair[e.date + ":" + e.hid + ":" + e.aid];
+    if(!f) continue;
+    e.hs = f.hs; e.as = f.as;
+    changed = true;
+  }
+
   for(const g of S.games){
     const e = S.card[String(g.pk)];
     if(!e || e.hs != null) continue;
@@ -1543,6 +1565,35 @@ function trimClub(desc, teamId){
   return desc;
 }
 
+/* MLB's transaction feed does not reliably carry a team id, but every
+   description opens with the club's full name. Matching that recovers the club
+   — and with it the colour, the abbreviation, and the ability to trim the name
+   out of the sentence. Longest name first, so "Chicago White Sox" is not
+   mistaken for "Chicago Cubs" on the word Chicago. */
+let CLUB_BY_NAME = null;
+function clubFromText(desc){
+  if(!desc) return null;
+  if(!CLUB_BY_NAME){
+    CLUB_BY_NAME = [];
+    for(const id of Object.keys(T).map(Number)){
+      const full = (city(id) ? city(id) + " " : "") + nm(id);
+      CLUB_BY_NAME.push([full.toLowerCase(), id]);
+      if(nm(id)) CLUB_BY_NAME.push([nm(id).toLowerCase(), id]);
+    }
+    CLUB_BY_NAME.sort((a, b) => b[0].length - a[0].length);
+  }
+  const low = String(desc).toLowerCase();
+  for(const [name, id] of CLUB_BY_NAME) if(low.startsWith(name + " ")) return id;
+  return null;
+}
+
+/* The position MLB names before the player: "optioned CF Junior Perez". A real
+   detail, and it costs nothing since the sentence is already in hand. */
+function positionFromText(desc){
+  const m = String(desc || "").match(/\b(RHP|LHP|C|1B|2B|3B|SS|LF|CF|RF|OF|IF|DH|P)\s+[A-Z]/);
+  return m ? m[1] : null;
+}
+
 /* An initials disc in the club's colour. Not a likeness — MLB's headshots are
    licensed images and hotlinking them from a hosted page is a different matter
    from reading their stats API, so this is drawn rather than fetched. It earns
@@ -1563,11 +1614,25 @@ function initialsOf(name){
   return (parts[0][0] + (surname[0] || parts[parts.length - 1][0])).toUpperCase();
 }
 
-function avatar(name, teamId, big){
+/* A hex colour at low opacity, so the disc carries the club's colour as a fill
+   rather than only a ring. An outline alone reads as a placeholder. */
+function tint(hex, alpha){
+  const h = String(hex || "#738E93").replace("#", "");
+  const n = parseInt(h.length === 3 ? h.split("").map(x => x + x).join("") : h, 16);
+  if(isNaN(n)) return "rgba(115,142,147," + alpha + ")";
+  return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255)
+    + "," + alpha + ")";
+}
+
+function avatar(name, teamId, big, pos){
   const c = teamId ? col(teamId) : "#738E93";
   const txt = initialsOf(name) || (teamId ? ab(teamId).slice(0, 2) : "\u2014");
-  return '<span class="av' + (big ? " avbig" : "") + '" aria-hidden="true"'
-    + ' style="border-color:' + c + ';color:' + c + '">' + esc(txt) + '</span>';
+  return '<span class="avwrap" aria-hidden="true">'
+    + '<span class="av' + (big ? " avbig" : "") + '"'
+      + ' style="border-color:' + c + ';color:' + c
+      + ';background:' + tint(c, big ? 0.18 : 0.12) + '">' + esc(txt) + '</span>'
+    + (pos ? '<span class="avpos">' + esc(pos) + '</span>' : "")
+    + '</span>';
 }
 
 /* A trade moves a player between two clubs, and the sentence makes you work out
@@ -1579,8 +1644,8 @@ function tradeAvatar(e){
      left, an arrow, the club he joined. */
   const txt = initialsOf(e.person);
   return '<span class="avtrade" aria-hidden="true">'
-    + '<span class="av avbig" style="border-color:' + col(to) + ';color:' + col(to) + '">'
-      + esc(txt || "\u21c4") + '</span>'
+    + '<span class="av avbig" style="border-color:' + col(to) + ';color:' + col(to)
+      + ';background:' + tint(col(to), 0.18) + '">' + esc(txt || "\u21c4") + '</span>'
     + '<span class="avpair">'
       + '<i class="avmini" style="background:' + col(from) + '"></i>'
       + '<i class="avarrow">\u2192</i>'
@@ -1601,7 +1666,9 @@ function feedKind(t){
   const d = String((t || {}).typeDesc || "").toLowerCase();
   const note = String((t || {}).description || "").toLowerCase();
   if(d.includes("trade")) return { tag:"trade", tone:"seam" };
-  if(note.includes("injured list") || note.includes("60-day") || note.includes("il"))
+  /* "il" as a substring matches Milwaukee, Phillies and available, so the test
+     has to be for the phrase MLB actually uses. */
+  if(/injured list|\b\d+-day\b|\bIL\b/i.test(note))
     return note.includes("activated") || note.includes("reinstated")
       ? { tag:"back", tone:"grass" } : { tag:"injured", tone:"blush" };
   if(note.includes("activated") || note.includes("reinstated")) return { tag:"back", tone:"grass" };
@@ -1623,7 +1690,7 @@ async function loadFeed(){
   const out = [];
   for(const t of j.transactions || []){
     if(!t.description) continue;
-    const tid = (t.team || {}).id;
+    const tid = (t.team || {}).id || clubFromText(t.description);
     out.push({
       id:t.id, date:t.date || t.effectiveDate || "",
       team:T[tid] ? tid : null,
@@ -3426,7 +3493,8 @@ function renderFeed(){
           ? ilLength(e.desc) : null;
         return '<article class="fitem' + (mine(e) ? " mine" : "")
           + (big ? " big" : "") + '">'
-          + (e.kind.tag === "trade" ? tradeAvatar(e) : avatar(e.person, e.team, big))
+          + (e.kind.tag === "trade" ? tradeAvatar(e)
+              : avatar(e.person, e.team, big, positionFromText(e.desc)))
           + '<div class="fbody">'
             + '<div class="fhead2">'
               + '<span class="fclub">' + (e.team ? ab(e.team) : "\u2014") + '</span>'
@@ -3477,15 +3545,28 @@ function scorecardBlock(){
     .sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
   const pending = Object.values(S.card).filter(e => e.hs == null).length;
 
-  if(!settled.length)
+  if(!settled.length){
+    const today = iso(new Date());
+    const waiting = Object.values(S.card).filter(e => e.hs == null);
+    const laterToday = waiting.filter(e => e.date === today).length;
+    const older = waiting.length - laterToday;
     return '<div class="empty"><h3>Nothing settled yet</h3>'
-      + '<p>' + (pending
-          ? pending + (pending === 1 ? " prediction is" : " predictions are")
-            + ' recorded and waiting on results. They appear here once those games finish.'
-          : 'Predictions are written down when you open this tab and checked against the '
+      + '<p>' + (!waiting.length
+          ? 'Predictions are written down when you open this tab and checked against the '
             + 'result afterwards. Nothing is reconstructed after the fact, so the record '
-            + 'starts from your first visit.')
+            + 'starts from your first visit.'
+          : (laterToday
+              ? laterToday + (laterToday === 1 ? ' prediction is' : ' predictions are')
+                + ' recorded for games later today. They are graded once those finish.'
+              : "")
+            + (older
+                ? (laterToday ? ' ' : "")
+                  + older + (older === 1 ? ' older prediction is' : ' older predictions are')
+                  + ' still waiting on results \u2014 the season data loads a moment after '
+                  + 'this tab opens, so give it a second and check again.'
+                : ""))
       + '</p></div>';
+  }
 
   const s = scorecardSummary();
   /* Settled games exist but none are gradeable — every one a tie. Rare, but a
