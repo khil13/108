@@ -417,12 +417,18 @@ ul{margin:0;padding:0;list-style:none;}
   padding:4px 0;}
 .cblabel{font-family:var(--mono);font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;
   color:#738E93;}
-.cbval{font-size:13px;color:var(--chalk);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cbval{font-size:13px;color:var(--chalk);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;min-width:88px;}
 .cbval b{font-family:var(--display);font-size:15px;font-weight:400;letter-spacing:.03em;}
 .cbrow .cbval b{color:var(--chalk);}
-.cbval em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:#738E93;text-decoration:line-through;opacity:.7;margin-left:5px;}
+.cbval em{font-style:normal;font-family:var(--mono);font-size:10px;color:#738E93;}
+/* Only the superseded raw probability is struck through. Putting this on
+   .cbval em also crossed out the Watch row's plate-appearance rate. */
+.cbraw{font-family:var(--mono);font-size:9.5px;color:#738E93;
+  text-decoration:line-through;opacity:.7;margin-left:5px;}
 .cbodds{font-family:var(--mono);font-size:12px;color:var(--bulb);white-space:nowrap;}
-.cbodds.sm{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#738E93;}
+.cbodds.sm{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#738E93;
+  min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .cbwx{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);
   font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
   color:#738E93;}
@@ -524,7 +530,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "72 — calibrated odds";
+const BUILD = "73 — strikethrough and strikeout row fixes";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -3567,7 +3573,8 @@ function cardBlock(g){
       + '<span class="cblabel">Side</span>'
       + '<span class="tbar" style="background:' + col(favId) + '" aria-hidden="true"></span>'
       + '<span class="cbval"><b>' + ab(favId) + '</b> ' + Math.round(favP * 100) + '%'
-        + (shifted ? ' <em>raw ' + Math.round(rawP * 100) + '%</em>' : "") + '</span>'
+        + (shifted ? ' <span class="cbraw">raw ' + Math.round(rawP * 100) + '%</span>' : "")
+        + '</span>'
       + '<span class="cbodds">' + american(favP) + '</span>'
     + '</div>'
     + (tot
@@ -3602,14 +3609,17 @@ function cardBlock(g){
             return { pid, ownId, k, name:(S.pitchers[pid] || {}).name };
           }).filter(Boolean);
         if(!rows.length) return "";
+        /* The projected number is the point of the row, so it must never be the
+           thing that gets squeezed out. The detail is abbreviated and allowed to
+           truncate instead. */
         return rows.map(r => '<div class="cbrow">'
-          + '<span class="cblabel">' + esc(lastName(r.name)) + ' K</span>'
+          + '<span class="cblabel">K</span>'
           + '<span class="tbar" style="background:' + col(r.ownId) + '" aria-hidden="true"></span>'
-          + '<span class="cbval"><b>' + r.k.exp.toFixed(1) + '</b> projected</span>'
+          + '<span class="cbval">' + esc(lastName(r.name))
+            + ' <b>' + r.k.exp.toFixed(1) + '</b></span>'
           + '<span class="cbodds sm">' + r.k.k9.toFixed(1) + ' K/9 \u00b7 '
-            + r.k.ip.toFixed(1) + ' IP typical'
-            + (r.k.oppKRate != null
-                ? ' \u00b7 vs ' + Math.round(r.k.oppKRate * 100) + '% K lineup' : "")
+            + r.k.ip.toFixed(1) + ' IP'
+            + (r.k.oppKRate != null ? ' \u00b7 ' + Math.round(r.k.oppKRate * 100) + '%' : "")
             + '</span>'
           + '</div>').join("");
       })()
