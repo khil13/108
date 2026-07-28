@@ -121,7 +121,7 @@ ul{margin:0;padding:0;list-style:none;}
      standings row stretched to 1,140px leaves the club name marooned from its
      numbers, so tables keep a readable width and centre themselves. */
   .dblock,.method,.thead,.trow,.pthead,.prow,.othead,.orow,.follow,.since,
-  .sincelite,.ledger,.expandall,.disc.notes,.note{
+  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk{
     max-width:740px;margin-left:auto;margin-right:auto;}
 }
 @media(min-width:1600px){
@@ -387,25 +387,37 @@ ul{margin:0;padding:0;list-style:none;}
 .fitem.mine .fdesc{color:var(--chalk);}
 .chip.grass{color:var(--grass);border-color:#1E4634;background:#0F2A1D;}
 .chip.blush{color:var(--blush);border-color:#5E2029;background:#2A1418;}
-.cdday{font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
-  color:#738E93;margin:16px 0 6px;}
-.cdrow{display:grid;grid-template-columns:18px 1fr 90px 96px;gap:9px;align-items:baseline;
-  padding:7px 2px;border-bottom:1px solid rgba(34,67,74,.5);font-size:12.5px;}
-.cdmark{font-family:var(--display);font-size:13px;text-align:center;}
+.cdday{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
+  color:#738E93;margin:20px 0 2px;}
+/* One game and its picks form a block. Four columns competing for a phone's
+   width is what truncated "0 strikeouts" to "0 stri…" — the matchup and score
+   now have a line to themselves and everything else sits underneath, where it
+   can wrap instead of clip. */
+.cdblk{padding:10px 2px 9px;border-bottom:1px solid rgba(34,67,74,.5);}
+.cdline{display:grid;grid-template-columns:16px 1fr auto;gap:9px;align-items:baseline;}
+.cdmark{font-family:var(--display);font-size:12px;text-align:center;line-height:1;}
 .cdmark.y{color:var(--grass);} .cdmark.n{color:var(--blush);} .cdmark.t{color:#738E93;}
-.cdgame{color:var(--chalk);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.cdgame em{font-style:normal;font-family:var(--mono);font-size:11.5px;color:var(--slate);
-  margin-left:8px;}
-.cdsaid{font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--slate);
-  text-align:right;}
-.cdsaid b{color:var(--chalk);font-weight:500;}
-.cdruns{font-family:var(--mono);font-size:10px;color:#738E93;text-align:right;}
-.cdruns em{font-style:normal;color:var(--slate);}
+.cdteams{font-size:14px;color:var(--slate);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;}
+.cdteams b{color:var(--chalk);font-weight:500;}
+/* The winning side's runs in chalk, the losing side dim, so the score says who
+   won without the reader having to remember that away comes first. */
+.cdscore{font-family:var(--mono);font-size:13.5px;color:#738E93;white-space:nowrap;}
+.cdscore b{color:var(--chalk);font-weight:500;}
+.cdmeta{display:flex;flex-wrap:wrap;gap:2px 14px;margin:5px 0 0 25px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:#738E93;}
+.cdmeta b{color:var(--slate);font-weight:500;}
 /* A pick's own result, indented under the game it belonged to. */
-.cdsub{padding-left:14px;border-left:1px solid rgba(34,67,74,.6);margin-left:4px;}
-.cdsub .cdgame{color:var(--slate);}
-.cdsub .cdgame em{color:#738E93;}
-.cdsub .cdruns b{color:var(--bulb);font-weight:500;}
+.cdpick{display:grid;grid-template-columns:14px 1fr auto;gap:8px;align-items:baseline;
+  margin:7px 0 0 25px;padding-left:10px;border-left:1px solid rgba(34,67,74,.6);}
+/* Wrapping rather than an ellipsis: in a block layout there is a line below to
+   spill onto, and a clipped "0 stri…" is exactly what this rework was for. */
+.cdwho{font-size:12.5px;color:var(--slate);min-width:0;line-height:1.45;}
+.cdwho em{font-style:normal;font-family:var(--mono);font-size:10px;color:#738E93;
+  margin-left:7px;}
+.cdout{font-family:var(--mono);font-size:10.5px;color:#738E93;text-align:right;
+  white-space:nowrap;}
+.cdout b{color:var(--bulb);font-weight:500;}
 .cardblk{background:var(--deep);border:1px solid var(--line);border-radius:5px;
   padding:11px 13px 10px;margin-top:10px;}
 .cbhead{display:flex;align-items:baseline;gap:10px;padding-bottom:8px;
@@ -530,7 +542,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "78 — one bat to watch per club";
+const BUILD = "81 — the record grades the number the card showed";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -1001,8 +1013,10 @@ async function loadSeason(){
         const rv = runs[aid] || (runs[aid] = { rs:0, ra:0, g:0 });
         rh.rs += h.score; rh.ra += a.score; rh.g++;
         rv.rs += a.score; rv.ra += h.score; rv.g++;
-        // Kept in full so the model can be replayed against them later.
-        finals.push({ date:g.officialDate || day.date, hid, aid, hs:h.score, as:a.score,
+        // Kept in full so the model can be replayed against them later. The id
+        // is what the scorecard is keyed by, so settlement can be exact.
+        finals.push({ pk:g.gamePk, date:g.officialDate || day.date, hid, aid,
+          hs:h.score, as:a.score,
           hsp:(h.probablePitcher || {}).id || null,
           asp:(a.probablePitcher || {}).id || null });
         if(h.score === a.score) continue;   // no winner to record below
@@ -1295,9 +1309,12 @@ function saveScorecard(){
 /* Called when the Plays tab renders a game that has not started. Records the
    prediction once and never revises it. */
 function ksFor(g){
-  return [[g.aProbId, g.hid], [g.hProbId, g.aid]].map(([pid, oppId]) => {
+  /* The pitcher's own club is stored as well as the lineup he faces, so the
+     record can label his row the way it labels a bat's. Records written before
+     build 79 have no `own` and simply go unlabelled. */
+  return [[g.aProbId, g.hid, g.aid], [g.hProbId, g.aid, g.hid]].map(([pid, oppId, own]) => {
     const k = projectStrikeouts(pid, oppId);
-    return k ? { pid, name:(S.pitchers[pid] || {}).name, exp:k.exp } : null;
+    return k ? { pid, own, name:(S.pitchers[pid] || {}).name, exp:k.exp } : null;
   }).filter(Boolean);
 }
 
@@ -1327,12 +1344,31 @@ function recordPrediction(g){
       const ks = ksFor(g);
       if(ks.length){ existing.ks = ks; filled = true; }
     }
+    /* The projection itself is kept current too. The first pass runs before
+       loadDetail has fetched starters and bullpens, so what it records is the
+       records-only line — measured at up to fourteen points from the number the
+       card goes on to show, far enough to favour the other club. Leaving it
+       meant the scorecard graded a prediction that was never displayed.
+
+       This is still not revision after the fact: recordPrediction returns at the
+       top unless the game is scheduled, and renderPlays only passes it games
+       that have not started. First pitch closes the record for good. */
+    const shown = calibrate(pr.pHome);
+    if(existing.pHome !== pr.pHome || existing.shown !== shown){
+      existing.pHome = pr.pHome; existing.shown = shown;
+      existing.usedSP = pr.usedSP; existing.usedBP = pr.usedBP;
+      filled = true;
+    }
     if(filled) S.cardDirty = true;
     return;
   }
   S.card[key] = {
     date:g.date, hid:g.hid, aid:g.aid,
-    pHome:pr.pHome, usedSP:pr.usedSP, usedBP:pr.usedBP,
+    /* Both numbers. pHome is the model's own output; shown is what the card
+       actually put on screen, which is the calibrated one wherever a fit exists.
+       The record grades what was shown. */
+    pHome:pr.pHome, shown:calibrate(pr.pHome),
+    usedSP:pr.usedSP, usedBP:pr.usedBP,
     total:tot ? tot.total : null,
     watches:bats.map(watchOf),
     ks:ksFor(g),
@@ -1346,20 +1382,33 @@ function recordPrediction(g){
 function settleScorecard(){
   let changed = false;
 
-  /* The season's completed games, keyed by date and club pair. The schedule
-     window only spans four days, so without this any prediction older than that
-     could never be settled — go away for a week and the whole card orphans. */
-  const byPair = {};
+  /* The season's completed games. The four-day schedule window cannot settle a
+     prediction older than itself — go away for a week and the whole card orphans
+     — so results come from here instead.
+
+     Keyed by MLB's game id, which is what the scorecard itself is keyed by, so
+     settlement is exact. The old key was date and club pair, and a doubleheader
+     has two ids sharing one of those: both predictions were handed the first
+     game's score, and the second game's picks were graded against a result that
+     was not theirs.
+
+     The pair key survives as a fallback for any final carrying no id, but only
+     where it identifies one game. Where two share it there is nothing to tell
+     them apart, so both are left unsettled rather than guessed at. */
+  const byPk = {}, byPair = {}, ambiguous = {};
   if(Array.isArray(S.finals))
     for(const f of S.finals){
       if(!f || !f.date || f.hs == null || f.as == null) continue;
-      byPair[f.date + ":" + f.hid + ":" + f.aid] = f;
+      if(f.pk != null) byPk[String(f.pk)] = f;
+      const k = f.date + ":" + f.hid + ":" + f.aid;
+      if(k in byPair) ambiguous[k] = true; else byPair[k] = f;
     }
 
   for(const key in S.card){
     const e = S.card[key];
     if(!e || e.hs != null || !e.date) continue;
-    const f = byPair[e.date + ":" + e.hid + ":" + e.aid];
+    const k = e.date + ":" + e.hid + ":" + e.aid;
+    const f = byPk[key] || (ambiguous[k] ? null : byPair[k]);
     if(!f) continue;
     e.hs = f.hs; e.as = f.as;
     changed = true;
@@ -1449,24 +1498,38 @@ async function settlePicksFromBox(){
   if(changed || S.cardDirty){ saveScorecard(); S.cardDirty = false; render(); }
 }
 
-/* The record so far, over settled games only. */
+/* What the card put on screen, which is what the record grades. Entries written
+   before build 81 stored only the model's raw number, so that is the fallback. */
+const gradedP = e => e.shown != null ? e.shown : e.pHome;
+
+/* The record so far, over settled games only.
+
+   A drawn game has no side to be right about, so it sits out the side record —
+   but its bats and its starters are gradeable like anyone else's, and used to be
+   dropped from every tally while still drawing rows on screen. Sides are counted
+   over the games that could be called; everything else over all of them. */
 function scorecardSummary(){
-  const done = Object.values(S.card).filter(e => e.hs != null && e.hs !== e.as);
-  if(!done.length) return null;
-  let right = 0, absErr = 0, totN = 0, brier = 0;
-  let watchN = 0, watchHr = 0, high = 0, highRight = 0;
-  let kN = 0, kErr = 0, kBias = 0;
-  for(const e of done){
+  const settled = Object.values(S.card).filter(e => e.hs != null);
+  if(!settled.length) return null;
+  const called = settled.filter(e => e.hs !== e.as);
+
+  let right = 0, brier = 0, high = 0, highRight = 0;
+  for(const e of called){
+    const p = gradedP(e);
     const homeWon = e.hs > e.as;
-    const conf = Math.max(e.pHome, 1 - e.pHome);
-    const hit = (e.pHome > 0.5) === homeWon;
+    const conf = Math.max(p, 1 - p);
+    const hit = (p > 0.5) === homeWon;
     if(hit) right++;
     /* The picks it leaned on, which is where a model earns its keep. The
        threshold is 55 rather than 60 because the calibration told the model to
        regress team records hard, and it now rarely exceeds 60 at all — a bar it
        almost never clears measures nothing. */
     if(conf >= CONF_BAR){ high++; if(hit) highRight++; }
-    brier += Math.pow(e.pHome - (homeWon ? 1 : 0), 2);
+    brier += Math.pow(p - (homeWon ? 1 : 0), 2);
+  }
+
+  let absErr = 0, totN = 0, watchN = 0, watchHr = 0, kN = 0, kErr = 0, kBias = 0;
+  for(const e of settled){
     if(e.total != null){ absErr += Math.abs(e.total - (e.hs + e.as)); totN++; }
     for(const w of watchList(e)){
       if(!w.result) continue;
@@ -1477,7 +1540,9 @@ function scorecardSummary(){
       kN++; kErr += Math.abs(k.exp - k.actual); kBias += k.exp - k.actual;
     }
   }
-  return { n:done.length, right, acc:right / done.length, brier:brier / done.length,
+  const n = called.length;
+  return { n, drawn:settled.length - n, right,
+           acc:n ? right / n : null, brier:n ? brier / n : null,
            runMAE:totN ? absErr / totN : null, totN,
            watchN, watchHr, high, highRight,
            kN, kMAE:kN ? kErr / kN : null, kBias:kN ? kBias / kN : null };
@@ -3487,6 +3552,14 @@ function calibrationBlock(){
 
 function renderOdds(){
   const lg = S.lg.odds, o = S.odds;
+  /* bootFromCache runs the simulation inside a try/catch and can leave the app
+     "ready" with no odds at all; a refresh that then fails offline leaves it
+     that way. Every club row below reaches straight into o, so without this the
+     tab is a blank screen. Today, Plays and Feed all cope on their own. */
+  if(!o)
+    return '<div class="pane"><div class="empty"><h3>Forecast unavailable</h3>'
+      + '<p>The simulation has not run in this session. Tap Refresh above \u2014 it '
+      + 'needs current standings, and those did not load.</p></div></div>';
   const rows = inLg(lg).sort((a,b) => o[b.id].berth - o[a.id].berth);
   const all = list();
   const n = f => all.filter(f).length;
@@ -3570,7 +3643,7 @@ function rangeBar(o){
 
 function renderSheet(){
   const t = S.teams[S.sheet]; if(!t) return "";
-  const id = t.id, o = S.odds[id], d = DIV[t.div];
+  const id = t.id, o = (S.odds && S.odds[id]) || null, d = DIV[t.div];
   const rows = inDiv(t.div), rank = rows.findIndex(x => x.id === id) + 1;
   const lead = rows[0], p = pictureOf(d[0]), cut = p.wilds[p.wilds.length-1];
   const done = S.games.filter(g => (g.hid===id||g.aid===id) && (g.st==="final"||g.st==="live"));
@@ -3590,16 +3663,21 @@ function renderSheet(){
     + '<div class="stats"><div><b>' + gbText(gbTo(t,lead)) + '</b><span>gb division</span></div>'
     + '<div><b>' + (cut && cut.id === id ? "—" : gbText(gbTo(t,cut||lead))) + '</b><span>gb cutline</span></div>'
     + '<div><b>' + (t.streak || "—") + '</b><span>streak</span></div></div>'
-    + '<div class="stats"><div><b>' + Math.round(o.projWins) + '</b><span>projected wins</span></div>'
-    + '<div><b>' + pc(o.div) + '%</b><span>win division</span></div>'
-    + '<div><b>' + pc(o.berth) + '%</b><span>reach october</span></div></div>'
-    + rangeBar(o)
+    /* The record, the race and the recent games all stand on their own. Only
+       these three cells and the band below need a simulation, so a sheet opened
+       without one shows dashes rather than nothing. */
+    + '<div class="stats"><div><b>' + (o ? Math.round(o.projWins) : "\u2014")
+      + '</b><span>projected wins</span></div>'
+    + '<div><b>' + (o ? pc(o.div) + '%' : "\u2014") + '</b><span>win division</span></div>'
+    + '<div><b>' + (o ? pc(o.berth) + '%' : "\u2014") + '</b><span>reach october</span></div></div>'
+    + (o ? rangeBar(o) : "")
     + '<p class="racenote">' + raceSentence(t) + '</p>'
-    + '<div class="swing">' + (S.swing != null
+    + (o ? '<div class="swing">' + (S.swing != null
         ? '<p>One win instead of one loss moves ' + ab(id) + '\u2019s October odds by <b>'
           + (S.swing*100).toFixed(1) + ' points</b>. Every remaining game carries roughly this much.</p>'
         : '<button class="btn wide" id="measure"' + (S.swingBusy?" disabled":"") + '>'
           + (S.swingBusy ? "Simulating…" : "What is one game worth?") + '</button>') + '</div>'
+      : "")
     + '<h4 class="ssub">Recent</h4><ul class="slist">'
     + (done.length ? done.map(g => {
         const home = g.hid === id, mine = home ? g.hs : g.as, theirs = home ? g.as : g.hs;
@@ -3858,19 +3936,14 @@ function scorecardBlock(){
   }
 
   const s = scorecardSummary();
-  /* Settled games exist but none are gradeable — every one a tie. Rare, but a
-     crash rather than a shrug if it goes unhandled. */
-  if(!s)
-    return '<div class="empty"><h3>Nothing to grade</h3>'
-      + '<p>' + settled.length + (settled.length === 1 ? ' game has' : ' games have')
-      + ' finished level, so there is no side to mark right or wrong.</p></div>';
   const byDay = [];
   for(const e of settled){
     const last = byDay[byDay.length - 1];
     if(last && last.date === e.date) last.items.push(e);
     else byDay.push({ date:e.date, items:[e] });
   }
-  const label = d => d === iso(shift(-1)) ? "Yesterday"
+  const label = d => d === iso(new Date()) ? "Today"
+    : d === iso(shift(-1)) ? "Yesterday"
     : (() => { const dt = new Date(d + "T12:00:00");
         return isNaN(dt) ? d : dt.toLocaleDateString(undefined,
           { weekday:"long", month:"short", day:"numeric" }); })();
@@ -3878,17 +3951,30 @@ function scorecardBlock(){
   return SEAM
     + '<h2 class="eyebrow">The record</h2>'
     + '<div class="ledger">'
-      + '<div><b>' + s.right + '/' + s.n + '</b><span>sides right</span></div>'
+      + '<div><b>' + (s.n ? s.right + '/' + s.n : "\u2014")
+        + '</b><span>sides right</span></div>'
       + '<div><b>' + (s.high ? s.highRight + '/' + s.high : "\u2014")
         + '</b><span>at ' + Math.round(CONF_BAR * 100) + '%+</span></div>'
       + '<div><b>' + (s.watchN ? s.watchHr + '/' + s.watchN : "\u2014")
         + '</b><span>bats homered</span></div>'
     + '</div>'
-    + '<p class="note cdsum">' + Math.round(s.acc * 100) + '% of sides, '
-      + (s.runMAE != null ? 'runs off by ' + s.runMAE.toFixed(1) + ', ' : "")
-      + (s.kMAE != null ? 'strikeouts off by ' + s.kMAE.toFixed(1) + ', ' : "")
-      + 'over ' + s.n + (s.n === 1 ? ' settled game' : ' settled games') + '. '
-      + (s.n < 20
+    + '<p class="note cdsum">'
+      + (s.n
+          ? 'Sides called right ' + Math.round(s.acc * 100) + '% of the time '
+            + 'over ' + s.n + (s.n === 1 ? ' settled game' : ' settled games') + '. '
+          : 'No side has been callable yet \u2014 every settled game finished level. ')
+      + (s.drawn
+          ? s.drawn + (s.drawn === 1 ? ' game finished' : ' games finished')
+            + ' level and so had no side to call, though the bats and arms in '
+            + (s.drawn === 1 ? 'it' : 'them') + ' are graded below. '
+          : "")
+      + (s.runMAE != null || s.kMAE != null
+          ? 'Run projections missed by ' + (s.runMAE != null ? s.runMAE.toFixed(1) : "\u2014")
+            + (s.kMAE != null ? ', strikeout projections by ' + s.kMAE.toFixed(1) : "")
+            + '. '
+          : "")
+      + (!s.n ? ""
+          : s.n < 20
           ? 'Too few to mean much yet \u2014 a coin flip would look like this for weeks.'
           : s.acc > 0.56 ? 'Better than backing the home side every time, so far.'
             : s.acc < 0.50 ? 'Worse than a coin flip over this stretch.'
@@ -3898,58 +3984,70 @@ function scorecardBlock(){
         + d.items.map(e => {
             const homeWon = e.hs > e.as;
             const tie = e.hs === e.as;
-            const picked = e.pHome > 0.5 ? e.hid : e.aid;
-            const hit = !tie && ((e.pHome > 0.5) === homeWon);
-            const conf = Math.round(Math.max(e.pHome, 1 - e.pHome) * 100);
+            const p = gradedP(e);
+            const picked = p > 0.5 ? e.hid : e.aid;
+            const hit = !tie && ((p > 0.5) === homeWon);
+            const conf = Math.round(Math.max(p, 1 - p) * 100);
             const runGap = e.total != null ? (e.hs + e.as) - e.total : null;
-            return '<article class="cdrow">'
-              + '<span class="cdmark ' + (tie ? "t" : hit ? "y" : "n") + '">'
-                + (tie ? "\u2013" : hit ? "\u2713" : "\u2717") + '</span>'
-              + '<span class="cdgame">' + ab(e.aid) + ' at ' + ab(e.hid)
-                + '<em>' + e.as + '\u2013' + e.hs + '</em></span>'
-              + '<span class="cdsaid">said <b>' + ab(picked) + '</b> ' + conf + '%</span>'
-              + '<span class="cdruns">' + (e.total != null
-                  ? e.total.toFixed(1) + ' \u2192 ' + (e.hs + e.as)
-                    + ' <em>' + (runGap > 0 ? "+" : "") + runGap.toFixed(1) + '</em>'
-                  : "") + '</span>'
-              + '</article>'
-              /* The watched bat was named as the one to watch, so its outcome is a
+            /* Away first, matching the "at" in the matchup, with the winner's
+               club and runs in chalk. */
+            const clubs = (homeWon ? ab(e.aid) + ' at <b>' + ab(e.hid) + '</b>'
+                            : tie ? ab(e.aid) + ' at ' + ab(e.hid)
+                            : '<b>' + ab(e.aid) + '</b> at ' + ab(e.hid));
+            const score = (homeWon || tie ? e.as : '<b>' + e.as + '</b>') + '\u2013'
+              + (homeWon ? '<b>' + e.hs + '</b>' : e.hs);
+
+            /* A pick and its outcome. The label column the old layout spent on
+               "bat to watch", repeated on every row, is now a club tag beside the
+               name — the same width says something different each time. */
+            const pick = (mark, name, tag, detail, out) =>
+              '<div class="cdpick">'
+              + '<span class="cdmark ' + mark[0] + '">' + mark[1] + '</span>'
+              + '<span class="cdwho">' + esc(name)
+                + '<em>' + [tag, detail].filter(Boolean).map(esc).join(" \u00b7 ") + '</em></span>'
+              + '<span class="cdout">' + out + '</span>'
+              + '</div>';
+
+            return '<article class="cdblk">'
+              + '<div class="cdline">'
+                + '<span class="cdmark ' + (tie ? "t" : hit ? "y" : "n") + '">'
+                  + (tie ? "\u2013" : hit ? "\u2713" : "\u2717") + '</span>'
+                + '<span class="cdteams">' + clubs + '</span>'
+                + '<span class="cdscore">' + score + '</span>'
+              + '</div>'
+              + '<div class="cdmeta">'
+                + '<span>said <b>' + ab(picked) + '</b> ' + conf + '%</span>'
+                + (e.total != null
+                    ? '<span>runs <b>' + e.total.toFixed(1) + '</b> \u2192 ' + (e.hs + e.as)
+                      + ' (' + (runGap > 0 ? "+" : "") + runGap.toFixed(1) + ')</span>'
+                    : "")
+              + '</div>'
+              /* The watched bat was named as one to watch, so its outcome is a
                  pick with a result — it gets its own marked row rather than a note
                  tacked onto the game above it. */
               + watchList(e).map(w => {
-                  const who = w.team ? ab(w.team) + ' bat' : 'bat to watch';
+                  const tag = w.team ? ab(w.team) + ' bat' : "bat";
                   if(!w.result)
-                    return '<article class="cdrow cdsub"><span class="cdmark t">\u2013</span>'
-                      + '<span class="cdgame">' + esc(lastName(w.name))
-                      + '<em>result not recorded</em></span>'
-                      + '<span class="cdsaid">' + who + '</span>'
-                      + '<span class="cdruns"></span></article>';
+                    return pick(["t", "\u2013"], lastName(w.name), tag,
+                                "result not recorded", "");
                   const homered = w.result.hr > 0;
-                  return '<article class="cdrow cdsub">'
-                    + '<span class="cdmark ' + (homered ? "y" : "n") + '">'
-                      + (homered ? "\u2713" : "\u2717") + '</span>'
-                    + '<span class="cdgame">' + esc(lastName(w.name))
-                      + '<em>' + (w.result.line ? esc(w.result.line) : "did not play")
-                      + '</em></span>'
-                    + '<span class="cdsaid">' + who + '</span>'
-                    + '<span class="cdruns">' + (homered
-                        ? '<b>' + w.result.hr + ' HR</b>' : 'no homer') + '</span>'
-                    + '</article>';
+                  return pick(homered ? ["y", "\u2713"] : ["n", "\u2717"],
+                    lastName(w.name), tag,
+                    w.result.line || "did not play",
+                    homered ? '<b>' + w.result.hr + ' HR</b>' : "no homer");
                 }).join("")
               + (Array.isArray(e.ks) ? e.ks.filter(k => k.actual != null).map(k => {
                   const gap = k.actual - k.exp;
                   const close = Math.abs(gap) <= 2;
-                  return '<article class="cdrow cdsub">'
-                    + '<span class="cdmark ' + (close ? "y" : "n") + '">'
-                      + (close ? "\u2713" : "\u2717") + '</span>'
-                    + '<span class="cdgame">' + esc(lastName(k.name))
-                      + '<em>' + k.actual + (k.actual === 1 ? ' strikeout' : ' strikeouts')
-                      + '</em></span>'
-                    + '<span class="cdsaid">said <b>' + k.exp.toFixed(1) + '</b> K</span>'
-                    + '<span class="cdruns"><em>' + (gap > 0 ? "+" : "")
-                      + gap.toFixed(1) + '</em></span>'
-                    + '</article>';
-                }).join("") : "");
+                  /* "0 strikeouts" was the longest string in the narrowest
+                     column, and the one that got clipped. K says it. */
+                  return pick(close ? ["y", "\u2713"] : ["n", "\u2717"],
+                    lastName(k.name), k.own ? ab(k.own) + ' arm' : "arm",
+                    k.actual + " K",
+                    'said <b>' + k.exp.toFixed(1) + '</b> ('
+                      + (gap > 0 ? "+" : "") + gap.toFixed(1) + ')');
+                }).join("") : "")
+              + '</article>';
           }).join("")).join("")
     + '<p class="note">Each pick was recorded before the game and has not been revised. '
     + 'A tick on the side means it won. On a bat to watch it means he homered \u2014 '
