@@ -530,7 +530,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "73 — strikethrough and strikeout row fixes";
+const BUILD = "75 — guards on the calibration and watch rate";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -945,8 +945,13 @@ async function loadHitterLogs(ids){
 /* The bats on every card currently open, deduped. */
 function openCardHitterIds(){
   const ids = [];
+  const today = iso(new Date());
   for(const g of S.games){
-    if(!S.open[g.pk]) continue;
+    /* Expanded cards on Today, and every game on today's Plays card — the Watch
+       pick weighs recent form, so it needs the logs whether or not a card on the
+       other tab happens to be open. */
+    const wanted = S.open[g.pk] || (g.date === today && g.st === "sched");
+    if(!wanted) continue;
     for(const tid of [g.aid, g.hid])
       for(const b of (S.hitters[tid] || []).slice(0, 5)) if(b.id) ids.push(b.id);
   }
@@ -1516,6 +1521,22 @@ function leagueKRate(){
 /* The bat most likely to matter: best home run rate against the most
    homer-prone arm on the card. An observation about who is involved, not a
    prediction that it happens. */
+/* The last five games counted four times over against the season total. Enough
+   that a hot bat overtakes a similar one who has gone quiet, not enough that a
+   genuinely elite rate loses to three good nights. Twenty at-bats is a small
+   sample and this treats it like one. */
+const WATCH_RECENCY = 4;
+
+function watchRate(b){
+  const base = b.perPA > 0 ? 1 / b.perPA : 0;
+  const f = S.hitterForm[b.id];
+  const ab = f && Number(f.ab) > 0 ? Number(f.ab) : 0;
+  const hr = f && Number(f.hr) >= 0 ? Number(f.hr) : null;
+  if(!ab || hr == null || !isFinite(hr)) return { rate:base, form:null };
+  const rate = (b.hr + WATCH_RECENCY * hr) / (b.pa + WATCH_RECENCY * ab);
+  return isFinite(rate) && rate >= 0 ? { rate, form:f } : { rate:base, form:null };
+}
+
 function bestMatchup(g){
   let best = null;
   const consider = (batTeam, oppPid) => {
@@ -1523,10 +1544,12 @@ function bestMatchup(g){
     if(!p || p.hr9 == null) return;
     for(const b of (S.hitters[batTeam] || []).slice(0, 5)){
       if(!b.perPA) continue;
-      const score = (1 / b.perPA) * p.hr9;
+      const r = watchRate(b);
+      const score = r.rate * p.hr9;
       if(!best || score > best.score)
         best = { score, batter:b.name, batterId:b.id, team:batTeam, perPA:b.perPA,
-                 hr:b.hr, pitcher:p.name, hr9:p.hr9 };
+                 hr:b.hr, pitcher:p.name, hr9:p.hr9,
+                 blended:r.rate, form:r.form };
     }
   };
   consider(g.aid, g.hProbId);
@@ -3231,16 +3254,22 @@ function fitCalibration(preds){
     a -= lr * ga / preds.length;
     b -= lr * gb / preds.length;
   }
+  if(!isFinite(a) || !isFinite(b) || a <= 0) return null;   // diverged
   return { a, b, n:preds.length };
 }
 
 /* Apply it, when one has been fitted. */
 function calibrate(p){
   const f = S.calFit;
-  if(!f || p == null) return p;
+  if(!f || p == null || !isFinite(p)) return p;
+  /* A malformed fit would turn every probability on every card into NaN, so it
+     is checked rather than trusted. A non-positive slope would also invert the
+     model, which no amount of miscalibration justifies. */
+  if(!isFinite(f.a) || !isFinite(f.b) || f.a <= 0) return p;
   const q = Math.min(0.999, Math.max(0.001, p));
   const x = Math.log(q / (1 - q));
-  return 1 / (1 + Math.exp(-(f.a * x + f.b)));
+  const out = 1 / (1 + Math.exp(-(f.a * x + f.b)));
+  return isFinite(out) ? out : p;
 }
 
 /* A search over the two weights that matter, now that there is a measure to
@@ -3627,10 +3656,15 @@ function cardBlock(g){
         ? '<div class="cbrow">'
           + '<span class="cblabel">Watch</span>'
           + '<span class="tbar" style="background:' + col(mu.team) + '" aria-hidden="true"></span>'
-          + '<span class="cbval">' + esc(lastName(mu.batter)) + ' <em>1 per '
-            + Math.round(mu.perPA) + ' PA</em></span>'
-          + '<span class="cbodds sm">v ' + esc(lastName(mu.pitcher))
-            + ' ' + mu.hr9.toFixed(1) + ' HR/9</span>'
+          + '<span class="cbval">' + esc(lastName(mu.batter))
+            + ' <em>1 per ' + Math.round(mu.blended ? 1 / mu.blended : mu.perPA)
+            + ' PA</em></span>'
+          + '<span class="cbodds sm">'
+            + (mu.form
+                ? 'L5 ' + mu.form.hr + ' HR \u00b7 ' + esc(lastName(mu.pitcher))
+                  + ' ' + mu.hr9.toFixed(1)
+                : 'v ' + esc(lastName(mu.pitcher)) + ' ' + mu.hr9.toFixed(1) + ' HR/9')
+            + '</span>'
           + '</div>'
         : "")
     + (wx
