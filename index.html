@@ -530,7 +530,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "77 — second game of a doubleheader names the next bat";
+const BUILD = "78 — one bat to watch per club";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -1304,7 +1304,7 @@ function ksFor(g){
 function recordPrediction(g){
   if(g.st !== "sched") return;
   const key = String(g.pk);
-  const pr = project(g), tot = projectTotal(g), mu = bestMatchup(g);
+  const pr = project(g), tot = projectTotal(g), bats = bestBats(g);
   if(!pr) return;
 
   /* The tab renders before every dataset has landed, so a first pass could
@@ -1315,8 +1315,13 @@ function recordPrediction(g){
   if(existing){
     let filled = false;
     if(existing.total == null && tot){ existing.total = tot.total; filled = true; }
-    if(!existing.watch && mu){
-      existing.watch = { name:mu.batter, team:mu.team, id:mu.batterId }; filled = true;
+    /* A record written before both clubs' hitters had loaded can hold one bat
+       where there should be two, so this tops up rather than only filling a
+       blank. */
+    if(bats.length > watchList(existing).length){
+      existing.watches = bats.map(watchOf);
+      delete existing.watch;
+      filled = true;
     }
     if((!existing.ks || !existing.ks.length)){
       const ks = ksFor(g);
@@ -1329,7 +1334,7 @@ function recordPrediction(g){
     date:g.date, hid:g.hid, aid:g.aid,
     pHome:pr.pHome, usedSP:pr.usedSP, usedBP:pr.usedBP,
     total:tot ? tot.total : null,
-    watch:mu ? { name:mu.batter, team:mu.team, id:mu.batterId } : null,
+    watches:bats.map(watchOf),
     ks:ksFor(g),
     at:new Date().toISOString()
   };
@@ -1377,9 +1382,10 @@ function settleScorecard(){
         if(b && b.pK != null) k.actual = b.pK;
       }
     }
-    if(e.watch && e.watch.id != null){
-      const b = S.box[e.watch.id];
-      if(b) e.watch.result = { hr:b.todayHr != null ? b.todayHr : null, line:b.today || null };
+    for(const w of watchList(e)){
+      if(w.result || w.id == null) continue;
+      const b = S.box[w.id];
+      if(b) w.result = { hr:b.todayHr != null ? b.todayHr : null, line:b.today || null };
     }
     changed = true;
   }
@@ -1399,11 +1405,13 @@ function settleScorecard(){
    looks a player up by id. The club's hitter list has both, so the id can be
    recovered rather than the record written off. */
 function repairWatchId(e){
-  if(!e.watch || e.watch.id != null || !e.watch.name || !e.watch.team) return;
-  const roster = S.hitters[e.watch.team];
-  if(!Array.isArray(roster)) return;
-  const hit = roster.find(b => b.name === e.watch.name);
-  if(hit && hit.id != null){ e.watch.id = hit.id; S.cardDirty = true; }
+  for(const w of watchList(e)){
+    if(w.id != null || !w.name || !w.team) continue;
+    const roster = S.hitters[w.team];
+    if(!Array.isArray(roster)) continue;
+    const hit = roster.find(b => b.name === w.name);
+    if(hit && hit.id != null){ w.id = hit.id; S.cardDirty = true; }
+  }
 }
 
 async function settlePicksFromBox(){
@@ -1413,7 +1421,7 @@ async function settlePicksFromBox(){
     if(!e || e.hs == null) continue;
     repairWatchId(e);
     if(e.boxTried) continue;
-    const needWatch = e.watch && e.watch.id != null && !e.watch.result;
+    const needWatch = watchList(e).some(w => w.id != null && !w.result);
     const needK = Array.isArray(e.ks) && e.ks.some(k => k.actual == null);
     if(needWatch || needK) pending.push(key);
   }
@@ -1426,9 +1434,10 @@ async function settlePicksFromBox(){
     let j;
     try{ j = await getJSON(MLB + "/game/" + key + "/boxscore"); }catch(err){ continue; }
     const box = readBoxscore(j);
-    if(e.watch && e.watch.id != null && !e.watch.result){
-      const b = box[e.watch.id];
-      if(b) e.watch.result = { hr:b.todayHr != null ? b.todayHr : 0, line:b.today || null };
+    for(const w of watchList(e)){
+      if(w.id == null || w.result) continue;
+      const b = box[w.id];
+      if(b) w.result = { hr:b.todayHr != null ? b.todayHr : 0, line:b.today || null };
     }
     if(Array.isArray(e.ks)) for(const k of e.ks){
       if(k.actual != null) continue;
@@ -1459,7 +1468,10 @@ function scorecardSummary(){
     if(conf >= CONF_BAR){ high++; if(hit) highRight++; }
     brier += Math.pow(e.pHome - (homeWon ? 1 : 0), 2);
     if(e.total != null){ absErr += Math.abs(e.total - (e.hs + e.as)); totN++; }
-    if(e.watch && e.watch.result){ watchN++; if(e.watch.result.hr > 0) watchHr++; }
+    for(const w of watchList(e)){
+      if(!w.result) continue;
+      watchN++; if(w.result.hr > 0) watchHr++;
+    }
     if(Array.isArray(e.ks)) for(const k of e.ks){
       if(k.actual == null) continue;
       kN++; kErr += Math.abs(k.exp - k.actual); kBias += k.exp - k.actual;
@@ -1570,11 +1582,20 @@ function matchupIndex(g){
   return i < 0 ? 0 : i;
 }
 
-function bestMatchup(g){
-  const ranked = [];
-  const consider = (batTeam, oppPid) => {
+/* One bat per club. A single name across both lineups meant half of every card
+   went unmentioned — the bat you were watching for was as likely as not on the
+   other side. Each club now gets its best home run rate weighed against the
+   HR/9 of the arm it actually faces.
+
+   The doubleheader rule survives, applied per club: the second game of a
+   repeated matchup takes each side's second name rather than repeating the
+   first. */
+function bestBats(g){
+  const n = matchupIndex(g);
+  const forClub = (batTeam, oppPid) => {
     const p = S.pitchers[oppPid];
-    if(!p || p.hr9 == null) return;
+    if(!p || p.hr9 == null) return null;
+    const ranked = [];
     for(const b of (S.hitters[batTeam] || []).slice(0, 5)){
       if(!b.perPA) continue;
       const r = watchRate(b);
@@ -1582,16 +1603,20 @@ function bestMatchup(g){
                     perPA:b.perPA, hr:b.hr, pitcher:p.name, hr9:p.hr9,
                     blended:r.rate, form:r.form });
     }
+    if(!ranked.length) return null;
+    ranked.sort((a, b) => b.score - a.score);
+    const i = Math.min(n, ranked.length - 1);
+    return i > 0 ? Object.assign({}, ranked[i], { rank:i }) : ranked[i];
   };
-  consider(g.aid, g.hProbId);
-  consider(g.hid, g.aProbId);
-  if(!ranked.length) return null;
-  ranked.sort((a, b) => b.score - a.score);
-  /* Second game of a doubleheader takes the second name, if there is one. */
-  const n = Math.min(matchupIndex(g), ranked.length - 1);
-  const pick = ranked[n];
-  return n > 0 ? Object.assign({}, pick, { rank:n }) : pick;
+  // Visitors bat against the home starter, and the reverse.
+  return [forClub(g.aid, g.hProbId), forClub(g.hid, g.aProbId)].filter(Boolean);
 }
+
+const watchOf = mu => ({ name:mu.batter, team:mu.team, id:mu.batterId });
+
+/* Records written before this change named one bat and stored it singular.
+   Both shapes are read through here, so an old card still grades. */
+const watchList = e => Array.isArray(e.watches) ? e.watches : (e.watch ? [e.watch] : []);
 
 /* Which club each player is actually on now.
 
@@ -3616,7 +3641,7 @@ function focusKey(el){
 /* One block per upcoming game: which side the model prefers, how many runs it
    projects, and the standout matchup. All three are this app's own output. */
 function cardBlock(g){
-  const pr = project(g), tot = projectTotal(g), mu = bestMatchup(g);
+  const pr = project(g), tot = projectTotal(g), bats = bestBats(g);
   if(!pr) return "";
   /* Displayed odds are the calibrated ones where a fit exists: the number the
      season says this model's confidence is actually worth. */
@@ -3688,22 +3713,20 @@ function cardBlock(g){
             + '</span>'
           + '</div>').join("");
       })()
-    + (mu
-        ? '<div class="cbrow">'
-          + '<span class="cblabel">' + (mu.rank ? "Watch 2" : "Watch") + '</span>'
-          + '<span class="tbar" style="background:' + col(mu.team) + '" aria-hidden="true"></span>'
-          + '<span class="cbval">' + esc(lastName(mu.batter))
-            + ' <em>1 per ' + Math.round(mu.blended ? 1 / mu.blended : mu.perPA)
-            + ' PA</em></span>'
-          + '<span class="cbodds sm">'
-            + (mu.rank ? 'next best \u00b7 ' : "")
-            + (mu.form
-                ? 'L5 ' + mu.form.hr + ' HR \u00b7 ' + esc(lastName(mu.pitcher))
-                  + ' ' + mu.hr9.toFixed(1)
-                : 'v ' + esc(lastName(mu.pitcher)) + ' ' + mu.hr9.toFixed(1) + ' HR/9')
-            + '</span>'
-          + '</div>'
-        : "")
+    + bats.map(mu => '<div class="cbrow">'
+        + '<span class="cblabel">Watch</span>'
+        + '<span class="tbar" style="background:' + col(mu.team) + '" aria-hidden="true"></span>'
+        + '<span class="cbval">' + esc(lastName(mu.batter))
+          + ' <em>1 per ' + Math.round(mu.blended ? 1 / mu.blended : mu.perPA)
+          + ' PA</em></span>'
+        + '<span class="cbodds sm">'
+          + (mu.rank ? 'next best \u00b7 ' : "")
+          + (mu.form
+              ? 'L5 ' + mu.form.hr + ' HR \u00b7 ' + esc(lastName(mu.pitcher))
+                + ' ' + mu.hr9.toFixed(1)
+              : 'v ' + esc(lastName(mu.pitcher)) + ' ' + mu.hr9.toFixed(1) + ' HR/9')
+          + '</span>'
+        + '</div>').join("")
     + (wx
         ? '<p class="cbwx">' + Math.round(wx.temp) + '\u00b0 \u00b7 '
           + Math.round(wx.wind) + ' mph ' + (rel || "from " + compass(wx.dir))
@@ -3893,28 +3916,26 @@ function scorecardBlock(){
               /* The watched bat was named as the one to watch, so its outcome is a
                  pick with a result — it gets its own marked row rather than a note
                  tacked onto the game above it. */
-              + (e.watch && e.watch.result
-                  ? (() => {
-                      const r = e.watch.result;
-                      const homered = r.hr > 0;
-                      return '<article class="cdrow cdsub">'
-                        + '<span class="cdmark ' + (homered ? "y" : "n") + '">'
-                          + (homered ? "\u2713" : "\u2717") + '</span>'
-                        + '<span class="cdgame">' + esc(lastName(e.watch.name))
-                          + '<em>' + (r.line ? esc(r.line) : "did not play") + '</em></span>'
-                        + '<span class="cdsaid">bat to watch</span>'
-                        + '<span class="cdruns">' + (homered
-                            ? '<b>' + r.hr + (r.hr === 1 ? ' HR' : ' HR') + '</b>'
-                            : 'no homer') + '</span>'
-                        + '</article>';
-                    })()
-                  : e.watch
-                    ? '<article class="cdrow cdsub"><span class="cdmark t">\u2013</span>'
-                      + '<span class="cdgame">' + esc(lastName(e.watch.name))
+              + watchList(e).map(w => {
+                  const who = w.team ? ab(w.team) + ' bat' : 'bat to watch';
+                  if(!w.result)
+                    return '<article class="cdrow cdsub"><span class="cdmark t">\u2013</span>'
+                      + '<span class="cdgame">' + esc(lastName(w.name))
                       + '<em>result not recorded</em></span>'
-                      + '<span class="cdsaid">bat to watch</span>'
-                      + '<span class="cdruns"></span></article>'
-                    : "")
+                      + '<span class="cdsaid">' + who + '</span>'
+                      + '<span class="cdruns"></span></article>';
+                  const homered = w.result.hr > 0;
+                  return '<article class="cdrow cdsub">'
+                    + '<span class="cdmark ' + (homered ? "y" : "n") + '">'
+                      + (homered ? "\u2713" : "\u2717") + '</span>'
+                    + '<span class="cdgame">' + esc(lastName(w.name))
+                      + '<em>' + (w.result.line ? esc(w.result.line) : "did not play")
+                      + '</em></span>'
+                    + '<span class="cdsaid">' + who + '</span>'
+                    + '<span class="cdruns">' + (homered
+                        ? '<b>' + w.result.hr + ' HR</b>' : 'no homer') + '</span>'
+                    + '</article>';
+                }).join("")
               + (Array.isArray(e.ks) ? e.ks.filter(k => k.actual != null).map(k => {
                   const gap = k.actual - k.exp;
                   const close = Math.abs(gap) <= 2;
@@ -3931,9 +3952,12 @@ function scorecardBlock(){
                 }).join("") : "");
           }).join("")).join("")
     + '<p class="note">Each pick was recorded before the game and has not been revised. '
-    + 'A tick on the side means it won. On the bat to watch it means he homered \u2014 '
-    + 'the row named him as the one to watch, so that is the outcome of the pick, not a '
+    + 'A tick on the side means it won. On a bat to watch it means he homered \u2014 '
+    + 'the row named him as one to watch, so that is the outcome of the pick, not a '
     + 'footnote. On a strikeout projection it means within two of the real count. '
+    + 'Cards written before build 78 named a single bat across both clubs rather than one '
+    + 'per club, so the bats-homered tally counts one pick a game over that stretch and '
+    + 'two a game after it. The rate is comparable; the raw counts are not. '
     + 'The run projection shows what was said, what happened and the gap; it misses by '
     + 'three and a half runs on average, so read that gap as normal rather than as an '
     + 'error.</p>';
@@ -3966,9 +3990,10 @@ function renderPlays(){
       + 'over the season it misses a single game by about three and a half runs, which is '
       + 'no better than guessing the average every time. <b>There is no over/under here</b> '
       + '\u2014 that word needs a book\'s number to mean anything and this app has no '
-      + 'source for one, so compare the projection to a line yourself. Watch is the best '
-      + 'home run rate against the most homer-prone arm on the card, which is an '
-      + 'observation about who is involved rather than a claim it will happen. Lineups are '
+      + 'source for one, so compare the projection to a line yourself. Watch names one bat '
+      + 'per club: the best home run rate in each lineup, weighed against the HR/9 of the '
+      + 'arm it faces. That is an observation about who is involved rather than a claim it '
+      + 'will happen. Lineups are '
       + 'not published until a few hours before first pitch, so none of this knows who is '
       + 'actually playing.</p>'
     : "";
