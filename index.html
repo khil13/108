@@ -420,7 +420,7 @@ ul{margin:0;padding:0;list-style:none;}
 .cbval{font-size:13px;color:var(--chalk);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .cbval b{font-family:var(--display);font-size:15px;font-weight:400;letter-spacing:.03em;}
 .cbrow .cbval b{color:var(--chalk);}
-.cbval em{font-style:normal;font-family:var(--mono);font-size:10px;color:#738E93;}
+.cbval em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:#738E93;text-decoration:line-through;opacity:.7;margin-left:5px;}
 .cbodds{font-family:var(--mono);font-size:12px;color:var(--bulb);white-space:nowrap;}
 .cbodds.sm{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#738E93;}
 .cbwx{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);
@@ -524,7 +524,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "71 — picks now settle from finished games";
+const BUILD = "72 — calibrated odds";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -591,7 +591,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, teamBat:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, teamBat:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, simBusy:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -1177,6 +1177,7 @@ function backtest(recencyW, useSP, regress, spWeight){
   }
   const n = preds.length;
   return {
+    preds,
     n, brier:brier / n, baseBrier:baseN ? baseBrier / baseN : null,
     acc:right / n, runMAE:absErr / n, runBias:bias / n, naiveMAE:naiveErr / n, spN,
     runBands:runBands.filter(b => b.n > 20).map(b => ({
@@ -1262,6 +1263,7 @@ function liveWinProb(g){
    So it is prospective. It starts empty and fills from the first time you open
    the Plays tab. A week of use gives you a week. */
 const CARD_KEY = "108.scorecard";
+const FIT_KEY = "108.calfit";
 const CARD_DAYS = 21;
 
 function loadScorecard(){
@@ -2355,8 +2357,9 @@ function projectionBlock(g){
   const label = inputs.length === 1 ? "records only"
     : inputs.slice(0, -1).join(", ") + " and " + inputs[inputs.length - 1];
   return '<div class="pblock">'
-    + '<h5 class="plabel">Model line · ' + label + '</h5>'
-    + row(g.aid, pr.pAway) + row(g.hid, pr.pHome) + '</div>';
+    + '<h5 class="plabel">Model line · ' + label
+      + (S.calFit ? ' · calibrated' : "") + '</h5>'
+    + row(g.aid, 1 - calibrate(pr.pHome)) + row(g.hid, calibrate(pr.pHome)) + '</div>';
 }
 
 /* The bats that can end an at-bat in one swing, against the arm they face.
@@ -3196,6 +3199,44 @@ function pictureBlock(lg){
 }
 
 
+/* The model says 60%; the record says those win 54%. Rather than leave that
+   gap in a table nobody re-reads, fit it and apply it.
+
+   Platt scaling: find a and b such that mapping the raw probability through
+   sigmoid(a * logit(p) + b) best matches what actually happened. An a below 1
+   means the model is overconfident, and the mapping pulls every number toward
+   even by exactly as much as the season says it should be pulled.
+
+   Fitted on the same games it is scored against, which is mild overfitting —
+   negligible with two parameters over a thousand games, but worth stating. */
+function fitCalibration(preds){
+  if(!preds || preds.length < 200) return null;
+  let a = 1, b = 0;
+  const lr = 0.3;
+  for(let iter = 0; iter < 600; iter++){
+    let ga = 0, gb = 0;
+    for(const q of preds){
+      const p = Math.min(0.999, Math.max(0.001, q.p));
+      const x = Math.log(p / (1 - p));
+      const pred = 1 / (1 + Math.exp(-(a * x + b)));
+      const err = pred - (q.homeWon ? 1 : 0);
+      ga += err * x; gb += err;
+    }
+    a -= lr * ga / preds.length;
+    b -= lr * gb / preds.length;
+  }
+  return { a, b, n:preds.length };
+}
+
+/* Apply it, when one has been fitted. */
+function calibrate(p){
+  const f = S.calFit;
+  if(!f || p == null) return p;
+  const q = Math.min(0.999, Math.max(0.001, p));
+  const x = Math.log(q / (1 - q));
+  return 1 / (1 + Math.exp(-(f.a * x + f.b)));
+}
+
 /* A search over the two weights that matter, now that there is a measure to
    search against. Sixteen replays of the season, which is fast because the data
    is already in memory. This is the difference between a constant I chose and
@@ -3292,6 +3333,27 @@ function calibrationBlock(){
                   + 'either.') + '</p>'
         : '<p>Starters could not be tested: MLB did not return a probable pitcher for '
           + 'enough completed games, or too few had the innings to judge.</p>')
+    + (S.calFit
+        ? '<h4 class="swhead">The numbers the cards now show</h4>'
+          + '<p>Every displayed probability is mapped through what actually happened: '
+          + 'sigmoid(' + S.calFit.a.toFixed(2) + ' \u00d7 logit(p) '
+          + (S.calFit.b >= 0 ? '+ ' : '\u2212 ') + Math.abs(S.calFit.b).toFixed(2) + '). '
+          + (S.calFit.a < 0.9
+              ? 'A slope below 1 means the model was overconfident, so every number is '
+                + 'pulled toward even by the amount the season says it should be.'
+              : S.calFit.a > 1.1
+                ? 'A slope above 1 means the model was underconfident and the numbers are '
+                  + 'pushed further from even.'
+                : 'A slope near 1 means the raw numbers were about right already.') + '</p>'
+          + '<div class="calhead"><span>Model said</span><span>Now shows</span><span></span></div>'
+          + [0.52, 0.56, 0.60, 0.66, 0.72].map(p => '<div class="calrow">'
+              + '<span>' + Math.round(p * 100) + '%</span>'
+              + '<span>' + Math.round(calibrate(p) * 100) + '%</span>'
+              + '<span></span></div>').join("")
+          + '<p class="caveat">Fitted on the same games it is scored against, which is mild '
+          + 'overfitting \u2014 two parameters over ' + S.calFit.n.toLocaleString()
+          + ' games, so the effect is small, but it is not an out-of-sample result.</p>'
+        : "")
     + (S.sweep && S.sweep.best
         ? '<h4 class="swhead">What the season would have chosen</h4>'
           + '<p>Searching both weights over the same games: the best combination is '
@@ -3485,8 +3547,13 @@ function focusKey(el){
 function cardBlock(g){
   const pr = project(g), tot = projectTotal(g), mu = bestMatchup(g);
   if(!pr) return "";
-  const favId = pr.pHome >= pr.pAway ? g.hid : g.aid;
-  const favP = Math.max(pr.pHome, pr.pAway);
+  /* Displayed odds are the calibrated ones where a fit exists: the number the
+     season says this model's confidence is actually worth. */
+  const cHome = calibrate(pr.pHome);
+  const favId = cHome >= 0.5 ? g.hid : g.aid;
+  const favP = Math.max(cHome, 1 - cHome);
+  const rawP = Math.max(pr.pHome, pr.pAway);
+  const shifted = S.calFit && Math.abs(favP - rawP) >= 0.01;
   const wx = wxAt(g.venueId, g.start);
   const v = S.venues[g.venueId];
   const rel = wx ? windRelative(wx.dir, cfBearing((v && v.name) || g.venue)) : null;
@@ -3499,7 +3566,8 @@ function cardBlock(g){
     + '<div class="cbrow">'
       + '<span class="cblabel">Side</span>'
       + '<span class="tbar" style="background:' + col(favId) + '" aria-hidden="true"></span>'
-      + '<span class="cbval"><b>' + ab(favId) + '</b> ' + Math.round(favP * 100) + '%</span>'
+      + '<span class="cbval"><b>' + ab(favId) + '</b> ' + Math.round(favP * 100) + '%'
+        + (shifted ? ' <em>raw ' + Math.round(rawP * 100) + '%</em>' : "") + '</span>'
       + '<span class="cbodds">' + american(favP) + '</span>'
     + '</div>'
     + (tot
@@ -3969,6 +4037,11 @@ document.addEventListener("click", e => {
         withSP:backtest(RECENCY_W, true)
       };
       if(S.cal.with) S.sweep = sweep();
+      /* Fit on the best model available — with starters if they were testable,
+         since that is what the cards actually use. */
+      const basis = (S.cal.withSP && S.cal.withSP.spN > 200) ? S.cal.withSP : S.cal.with;
+      S.calFit = basis ? fitCalibration(basis.preds) : null;
+      try{ localStorage.setItem(FIT_KEY, JSON.stringify(S.calFit)); }catch(err){}
       if(!S.cal.with) S.cal = null;
       S.calBusy = false; render();
     })();
@@ -4085,6 +4158,10 @@ document.addEventListener("visibilitychange", () => {
 S.follow = loadFollow();
 S.baseline = loadBaseline();
 S.card = loadScorecard();
+try{
+  const f = JSON.parse(localStorage.getItem(FIT_KEY) || "null");
+  if(f && typeof f.a === "number" && typeof f.b === "number") S.calFit = f;
+}catch(e){}
 
 /* Paint from cache first so there is no empty screen, then go and refresh.
    If the network is down, this is all you get — and the banner says so. */
