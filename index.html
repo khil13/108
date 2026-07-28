@@ -530,7 +530,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "76 — legacy picks recoverable, confidence bar at 55%";
+const BUILD = "77 — second game of a doubleheader names the next bat";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -1555,24 +1555,42 @@ function watchRate(b){
   return isFinite(rate) && rate >= 0 ? { rate, form:f } : { rate:base, form:null };
 }
 
+/* Which game of a repeated matchup this is. When two clubs meet twice on one
+   day — a doubleheader, usually a postponement being made up — the inputs
+   barely move, so the same bat wins both times and the second card tells you
+   nothing you did not already know. Naming the next-best bat instead gives two
+   real names rather than one repeated. */
+function matchupIndex(g){
+  const same = S.games.filter(x =>
+    x.date === g.date
+    && ((x.hid === g.hid && x.aid === g.aid) || (x.hid === g.aid && x.aid === g.hid)));
+  if(same.length < 2) return 0;
+  same.sort((a, b) => new Date(a.start) - new Date(b.start));
+  const i = same.findIndex(x => x.pk === g.pk);
+  return i < 0 ? 0 : i;
+}
+
 function bestMatchup(g){
-  let best = null;
+  const ranked = [];
   const consider = (batTeam, oppPid) => {
     const p = S.pitchers[oppPid];
     if(!p || p.hr9 == null) return;
     for(const b of (S.hitters[batTeam] || []).slice(0, 5)){
       if(!b.perPA) continue;
       const r = watchRate(b);
-      const score = r.rate * p.hr9;
-      if(!best || score > best.score)
-        best = { score, batter:b.name, batterId:b.id, team:batTeam, perPA:b.perPA,
-                 hr:b.hr, pitcher:p.name, hr9:p.hr9,
-                 blended:r.rate, form:r.form };
+      ranked.push({ score:r.rate * p.hr9, batter:b.name, batterId:b.id, team:batTeam,
+                    perPA:b.perPA, hr:b.hr, pitcher:p.name, hr9:p.hr9,
+                    blended:r.rate, form:r.form });
     }
   };
   consider(g.aid, g.hProbId);
   consider(g.hid, g.aProbId);
-  return best;
+  if(!ranked.length) return null;
+  ranked.sort((a, b) => b.score - a.score);
+  /* Second game of a doubleheader takes the second name, if there is one. */
+  const n = Math.min(matchupIndex(g), ranked.length - 1);
+  const pick = ranked[n];
+  return n > 0 ? Object.assign({}, pick, { rank:n }) : pick;
 }
 
 /* Which club each player is actually on now.
@@ -3672,12 +3690,13 @@ function cardBlock(g){
       })()
     + (mu
         ? '<div class="cbrow">'
-          + '<span class="cblabel">Watch</span>'
+          + '<span class="cblabel">' + (mu.rank ? "Watch 2" : "Watch") + '</span>'
           + '<span class="tbar" style="background:' + col(mu.team) + '" aria-hidden="true"></span>'
           + '<span class="cbval">' + esc(lastName(mu.batter))
             + ' <em>1 per ' + Math.round(mu.blended ? 1 / mu.blended : mu.perPA)
             + ' PA</em></span>'
           + '<span class="cbodds sm">'
+            + (mu.rank ? 'next best \u00b7 ' : "")
             + (mu.form
                 ? 'L5 ' + mu.form.hr + ' HR \u00b7 ' + esc(lastName(mu.pitcher))
                   + ' ' + mu.hr9.toFixed(1)
