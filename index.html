@@ -133,6 +133,7 @@ ul{margin:0;padding:0;list-style:none;}
 .glabel{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--slate);}
 .glabel.warn{color:var(--bulb);}
+.glabel.was{text-decoration:line-through;opacity:.55;}
 .livetag{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;
   letter-spacing:.16em;text-transform:uppercase;color:var(--blush);}
 .count{display:flex;align-items:center;gap:7px;margin-left:auto;}
@@ -523,7 +524,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "68 — scorecard settles from season results";
+const BUILD = "71 — picks now settle from finished games";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -726,12 +727,37 @@ function readStandings(json){
   return out;
 }
 
+/* MLB gives three views of a game's state: a coded letter, a broad category,
+   and a prose sentence. The letter is unambiguous where the prose is not, so it
+   wins when present.
+
+     D postponed   C cancelled   U suspended
+     S scheduled   P pre-game    I in progress   F final   O game over          */
 function statusOf(g){
-  const a = (g.status||{}).abstractGameState, d = (g.status||{}).detailedState || "";
-  if(/postponed|cancel|suspend/i.test(d)) return "off";
-  if(a === "Live") return "live";
-  if(a === "Final") return "final";
+  const st = g.status || {};
+  const code = st.codedGameState || st.statusCode || "";
+  const det = st.detailedState || "";
+  const abs = st.abstractGameState;
+  if(code === "D" || code === "C" || code === "U") return "off";
+  if(/postponed|cancel|suspend/i.test(det)) return "off";
+  if(abs === "Live") return "live";
+  if(abs === "Final") return "final";
   return "sched";
+}
+
+/* A delay is not a state of its own — a game can be delayed before it starts or
+   stopped mid-innings — so it rides alongside the status. MLB puts the reason
+   after a colon: "Delayed Start: Rain". Without this the card shows a start
+   time as though nothing were wrong, which is how a rain delay went unnoticed.
+
+   The reason can be absent, in which case the fact of the delay is still worth
+   showing. */
+function delayOf(g){
+  const det = (g.status || {}).detailedState || "";
+  if(!/delay/i.test(det)) return null;
+  const m = det.match(/:\s*(.+)$/);
+  const why = m ? m[1].trim() : null;
+  return { pre:/delayed start/i.test(det), why };
 }
 
 function readGames(json){
@@ -743,7 +769,7 @@ function readGames(json){
       if(!T[hid] || !T[aid]) continue;
       const ls = g.linescore || {}, off = ls.offense || {};
       out.push({
-        pk:g.gamePk, date:g.officialDate || day.date, st:statusOf(g),
+        pk:g.gamePk, date:g.officialDate || day.date, st:statusOf(g), delay:delayOf(g),
         sg:g.seriesGameNumber == null ? null : g.seriesGameNumber,
         gis:g.gamesInSeries == null ? null : g.gamesInSeries,
         detail:(g.status||{}).detailedState || "", hid, aid,
@@ -1254,21 +1280,43 @@ function saveScorecard(){
 
 /* Called when the Plays tab renders a game that has not started. Records the
    prediction once and never revises it. */
+function ksFor(g){
+  return [[g.aProbId, g.hid], [g.hProbId, g.aid]].map(([pid, oppId]) => {
+    const k = projectStrikeouts(pid, oppId);
+    return k ? { pid, name:(S.pitchers[pid] || {}).name, exp:k.exp } : null;
+  }).filter(Boolean);
+}
+
 function recordPrediction(g){
   if(g.st !== "sched") return;
   const key = String(g.pk);
-  if(S.card[key]) return;                       // written once, never rewritten
   const pr = project(g), tot = projectTotal(g), mu = bestMatchup(g);
   if(!pr) return;
+
+  /* The tab renders before every dataset has landed, so a first pass could
+     record a side with no run projection and no strikeout lines — and those
+     nulls then stuck forever. A record can be completed while the game has still
+     not started; once it has, nothing is ever revised. */
+  const existing = S.card[key];
+  if(existing){
+    let filled = false;
+    if(existing.total == null && tot){ existing.total = tot.total; filled = true; }
+    if(!existing.watch && mu){
+      existing.watch = { name:mu.batter, team:mu.team, id:mu.batterId }; filled = true;
+    }
+    if((!existing.ks || !existing.ks.length)){
+      const ks = ksFor(g);
+      if(ks.length){ existing.ks = ks; filled = true; }
+    }
+    if(filled) S.cardDirty = true;
+    return;
+  }
   S.card[key] = {
     date:g.date, hid:g.hid, aid:g.aid,
     pHome:pr.pHome, usedSP:pr.usedSP, usedBP:pr.usedBP,
     total:tot ? tot.total : null,
     watch:mu ? { name:mu.batter, team:mu.team, id:mu.batterId } : null,
-    ks:[[g.aProbId, g.hid], [g.hProbId, g.aid]].map(([pid, oppId]) => {
-      const k = projectStrikeouts(pid, oppId);
-      return k ? { pid, name:(S.pitchers[pid] || {}).name, exp:k.exp } : null;
-    }).filter(Boolean),
+    ks:ksFor(g),
     at:new Date().toISOString()
   };
   S.cardDirty = true;
@@ -1322,6 +1370,46 @@ function settleScorecard(){
     changed = true;
   }
   if(changed){ S.cardDirty = true; saveScorecard(); }
+}
+
+/* A pick can only be graded from the box score of the game it was made on, and
+   the live poll stops the moment a game ends. So the watched batter's result and
+   the starters' strikeout counts were never arriving: the window in which they
+   could be captured was only while the game was live and the app was open.
+
+   This closes it. For any finished game whose picks are still unresolved, fetch
+   that game's box score once and grade them. A few at a time, and each key is
+   claimed so a failed fetch is not retried forever. */
+async function settlePicksFromBox(){
+  const pending = [];
+  for(const key in S.card){
+    const e = S.card[key];
+    if(!e || e.hs == null || e.boxTried) continue;
+    const needWatch = e.watch && e.watch.id != null && !e.watch.result;
+    const needK = Array.isArray(e.ks) && e.ks.some(k => k.actual == null);
+    if(needWatch || needK) pending.push(key);
+  }
+  if(!pending.length) return;
+
+  let changed = false;
+  for(const key of pending.slice(0, 6)){
+    const e = S.card[key];
+    e.boxTried = true;                 // claimed, pass or fail
+    let j;
+    try{ j = await getJSON(MLB + "/game/" + key + "/boxscore"); }catch(err){ continue; }
+    const box = readBoxscore(j);
+    if(e.watch && e.watch.id != null && !e.watch.result){
+      const b = box[e.watch.id];
+      if(b) e.watch.result = { hr:b.todayHr != null ? b.todayHr : 0, line:b.today || null };
+    }
+    if(Array.isArray(e.ks)) for(const k of e.ks){
+      if(k.actual != null) continue;
+      const b = box[k.pid];
+      if(b && b.pK != null) k.actual = b.pK;
+    }
+    changed = true;
+  }
+  if(changed){ saveScorecard(); render(); }
 }
 
 /* The record so far, over settled games only. */
@@ -1978,6 +2066,38 @@ function playKind(event){
   return { tag:e || "play", tone:"slate" };
 }
 
+/* One box score, reduced to what the app uses: each player's season line, what
+   he did tonight, and a pitcher's count. Shared by the live poll and by the
+   settlement pass that grades finished picks. */
+function readBoxscore(j){
+  const out = {};
+  for(const sideKey of ["home", "away"]){
+    const side = (((j || {}).teams || {})[sideKey]) || {};
+    for(const key in (side.players || {})){
+      const p = side.players[key];
+      const id = (p.person || {}).id;
+      if(!id) continue;
+      const sb = (p.seasonStats || {}).batting || {};
+      const tb = (p.stats || {}).batting || {};
+      const tp = (p.stats || {}).pitching || {};
+      out[id] = {
+        avg:sb.avg && sb.avg !== "-" ? sb.avg : null,
+        hr:sb.homeRuns != null ? sb.homeRuns : null,
+        ops:sb.ops && sb.ops !== "-" ? sb.ops : null,
+        today:tb.summary || null,
+        todayHr:tb.homeRuns != null ? tb.homeRuns : null,
+        /* MLB has used both names for this field over the years. */
+        pitches:tp.numberOfPitches != null ? tp.numberOfPitches
+               : tp.pitchesThrown != null ? tp.pitchesThrown : null,
+        pIp:tp.inningsPitched || null,
+        pEr:tp.earnedRuns != null ? tp.earnedRuns : null,
+        pK:tp.strikeOuts != null ? tp.strikeOuts : null
+      };
+    }
+  }
+  return out;
+}
+
 /* Box scores for games in progress. This is where the batter's season line and
    the pitcher's count live — nothing lighter carries them.
 
@@ -2017,30 +2137,7 @@ async function loadBoxscores(){
 
       let j;
       try{ j = await getJSON(MLB + "/game/" + g.pk + "/boxscore"); }catch(e){ return; }
-      for(const sideKey of ["home", "away"]){
-        const side = ((j.teams || {})[sideKey]) || {};
-        for(const key in (side.players || {})){
-          const p = side.players[key];
-          const id = (p.person || {}).id;
-          if(!id) continue;
-          const sb = (p.seasonStats || {}).batting || {};
-          const tb = (p.stats || {}).batting || {};
-          const tp = (p.stats || {}).pitching || {};
-          out[id] = {
-            avg:sb.avg && sb.avg !== "-" ? sb.avg : null,
-            hr:sb.homeRuns != null ? sb.homeRuns : null,
-            ops:sb.ops && sb.ops !== "-" ? sb.ops : null,
-            today:tb.summary || null,
-            todayHr:tb.homeRuns != null ? tb.homeRuns : null,
-            /* MLB has used both names for this field over the years. */
-            pitches:tp.numberOfPitches != null ? tp.numberOfPitches
-                   : tp.pitchesThrown != null ? tp.pitchesThrown : null,
-            pIp:tp.inningsPitched || null,
-            pEr:tp.earnedRuns != null ? tp.earnedRuns : null,
-            pK:tp.strikeOuts != null ? tp.strikeOuts : null
-          };
-        }
-      }
+      Object.assign(out, readBoxscore(j));
     }));
   }
   S.box = out;
@@ -2631,9 +2728,19 @@ function gameCard(g){
   const homeBats = g.st === "live" && /bottom/i.test(g.half||"");
   const awayBats = g.st === "live" && /top/i.test(g.half||"");
   let head = "";
-  if(g.st === "live") head = '<span class="livetag"><span class="dot live"></span>' + inningText(g) + '</span>';
+  const dl = g.delay;
+  if(g.st === "off")
+    head = '<span class="glabel warn">' + esc(g.detail || "Postponed") + '</span>';
+  else if(dl && dl.pre)
+    /* Not started, and not starting on time. The scheduled time stays, struck
+       through, so it is clear what was meant to happen. */
+    head = '<span class="glabel warn">Delayed' + (dl.why ? ' \u00b7 ' + esc(dl.why) : "")
+      + '</span><span class="glabel was">' + dayName(g.start) + " " + clock(g.start) + '</span>';
+  else if(g.st === "live")
+    head = '<span class="livetag"><span class="dot' + (dl ? "" : " live") + '"></span>'
+      + (dl ? 'Delayed' + (dl.why ? ' \u00b7 ' + esc(dl.why) : "") : inningText(g)) + '</span>'
+      + (dl ? '<span class="glabel was">' + inningText(g) + '</span>' : "");
   else if(g.st === "final") head = '<span class="glabel">' + esc(g.detail || "Final") + '</span>';
-  else if(g.st === "off") head = '<span class="glabel warn">' + esc(g.detail) + '</span>';
   else head = '<span class="glabel">' + dayName(g.start) + " " + clock(g.start) + '</span>';
 
   let count = "";
@@ -2852,9 +2959,18 @@ function sinceBlock(){
 function renderToday(){
   const today = iso(new Date()), yday = iso(shift(-1)), tmw = iso(shift(1));
   const mine = S.games.filter(g => g.date === today);
-  const live = mine.filter(g => g.st === "live");
+  /* A game in progress is in progress, whatever date MLB filed it under. Past
+     midnight local time, a game that began at 9:38 the previous evening still
+     carries yesterday's officialDate — date-filtering it made every live game
+     vanish at midnight, which is exactly when you would still be watching. */
+  const live = S.games.filter(g => g.st === "live");
   const fin = mine.filter(g => g.st === "final");
-  const soon = mine.filter(g => g.st === "sched" || g.st === "off");
+  const soon = mine.filter(g => g.st === "sched");
+  /* A postponed game is not still to come, and listing it there was misleading.
+     It gets its own section after the rest. */
+  const off = mine.filter(g => g.st === "off");
+  /* A postponed game is not one of today's games. */
+  const playable = mine.length - off.length;
   const last = S.games.filter(g => g.date === yday && g.st === "final");
   const next = S.games.filter(g => g.date === tmw);
 
@@ -2887,9 +3003,9 @@ function renderToday(){
      panel is dead weight, so the whole ledger switches on whether the day
      has produced any baseball yet. */
   const panels = scored.length
-    ? [[live.length || mine.length, live.length ? "in progress" : "games today"],
+    ? [[live.length || playable, live.length ? "in progress" : "games today"],
        [runs, "runs today"], [close, "tight late"]]
-    : [[mine.length, "games today"],
+    : [[playable, "games today"],
        [blowingOut, "wind blowing out"],
        [thin ? thin : stakesToday, thin ? "thin air" : "with stakes"]];
 
@@ -2913,6 +3029,7 @@ function renderToday(){
     + block("On the field now", live)
     + block("Final today", fin)
     + block("Still to come", soon)
+    + block("Not being played", off)
     + (last.length ? SEAM + block("Last night", last) : "")
     + block("Tomorrow", next)
     + (mine.length + next.length === 0
@@ -3681,6 +3798,7 @@ function renderPlays(){
   upcoming.forEach(recordPrediction);
   settleScorecard();
   if(S.cardDirty){ saveScorecard(); S.cardDirty = false; }
+  settlePicksFromBox();
   const waiting = S.detailState === "loading" || !Object.keys(S.pitchers).length;
 
   const card = upcoming.length
