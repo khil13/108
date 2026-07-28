@@ -530,7 +530,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "75 — guards on the calibration and watch rate";
+const BUILD = "76 — legacy picks recoverable, confidence bar at 55%";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -1276,6 +1276,7 @@ function liveWinProb(g){
 const CARD_KEY = "108.scorecard";
 const FIT_KEY = "108.calfit";
 const CARD_DAYS = 21;
+const CONF_BAR = 0.55;
 
 function loadScorecard(){
   try{
@@ -1393,11 +1394,25 @@ function settleScorecard(){
    This closes it. For any finished game whose picks are still unresolved, fetch
    that game's box score once and grade them. A few at a time, and each key is
    claimed so a failed fetch is not retried forever. */
+/* Predictions written before the batter id was stored carry only a name and a
+   club. That was enough to leave them permanently ungradeable — the settlement
+   looks a player up by id. The club's hitter list has both, so the id can be
+   recovered rather than the record written off. */
+function repairWatchId(e){
+  if(!e.watch || e.watch.id != null || !e.watch.name || !e.watch.team) return;
+  const roster = S.hitters[e.watch.team];
+  if(!Array.isArray(roster)) return;
+  const hit = roster.find(b => b.name === e.watch.name);
+  if(hit && hit.id != null){ e.watch.id = hit.id; S.cardDirty = true; }
+}
+
 async function settlePicksFromBox(){
   const pending = [];
   for(const key in S.card){
     const e = S.card[key];
-    if(!e || e.hs == null || e.boxTried) continue;
+    if(!e || e.hs == null) continue;
+    repairWatchId(e);
+    if(e.boxTried) continue;
     const needWatch = e.watch && e.watch.id != null && !e.watch.result;
     const needK = Array.isArray(e.ks) && e.ks.some(k => k.actual == null);
     if(needWatch || needK) pending.push(key);
@@ -1422,7 +1437,7 @@ async function settlePicksFromBox(){
     }
     changed = true;
   }
-  if(changed){ saveScorecard(); render(); }
+  if(changed || S.cardDirty){ saveScorecard(); S.cardDirty = false; render(); }
 }
 
 /* The record so far, over settled games only. */
@@ -1437,8 +1452,11 @@ function scorecardSummary(){
     const conf = Math.max(e.pHome, 1 - e.pHome);
     const hit = (e.pHome > 0.5) === homeWon;
     if(hit) right++;
-    /* The picks it was most sure about, which is where a model earns its keep. */
-    if(conf >= 0.60){ high++; if(hit) highRight++; }
+    /* The picks it leaned on, which is where a model earns its keep. The
+       threshold is 55 rather than 60 because the calibration told the model to
+       regress team records hard, and it now rarely exceeds 60 at all — a bar it
+       almost never clears measures nothing. */
+    if(conf >= CONF_BAR){ high++; if(hit) highRight++; }
     brier += Math.pow(e.pHome - (homeWon ? 1 : 0), 2);
     if(e.total != null){ absErr += Math.abs(e.total - (e.hs + e.as)); totN++; }
     if(e.watch && e.watch.result){ watchN++; if(e.watch.result.hr > 0) watchHr++; }
@@ -3820,7 +3838,7 @@ function scorecardBlock(){
     + '<div class="ledger">'
       + '<div><b>' + s.right + '/' + s.n + '</b><span>sides right</span></div>'
       + '<div><b>' + (s.high ? s.highRight + '/' + s.high : "\u2014")
-        + '</b><span>at 60%+</span></div>'
+        + '</b><span>at ' + Math.round(CONF_BAR * 100) + '%+</span></div>'
       + '<div><b>' + (s.watchN ? s.watchHr + '/' + s.watchN : "\u2014")
         + '</b><span>bats homered</span></div>'
     + '</div>'
