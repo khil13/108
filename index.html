@@ -549,7 +549,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "85 — the bat pick knows about the air and the wind";
+const BUILD = "86 — an unposted starter no longer costs a club its bat";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -1376,13 +1376,22 @@ function recordPrediction(g){
      not started; once it has, nothing is ever revised. */
   const existing = S.card[key];
   if(existing){
+    /* Nothing about a settled record is ever revisited, whatever the schedule
+       still says about the game. A card can be marked final while MLB has yet to
+       flip the fixture's status, and the top-ups below would then overwrite
+       results that had already been graded. */
+    if(existing.hs != null) return;
     let filled = false;
     if(existing.total == null && tot){ existing.total = tot.total; filled = true; }
-    /* A record written before both clubs' hitters had loaded can hold one bat
-       where there should be two, so this tops up rather than only filling a
-       blank. */
-    if(bats.length > watchList(existing).length){
-      existing.watches = bats.map(watchOf);
+    const fresh = bats.map(watchOf);
+    const cur = watchList(existing);
+    const provisional = ws => ws.filter(w => w.tba).length;
+    /* Replaced when there are more bats than before, or when the same bats can
+       now be scored against a real starter rather than a stand-in. */
+    if(fresh.length > cur.length
+       || (fresh.length === cur.length && fresh.length > 0
+           && provisional(fresh) < provisional(cur))){
+      existing.watches = fresh;
       delete existing.watch;
       filled = true;
     }
@@ -1760,6 +1769,26 @@ function matchupIndex(g){
    The doubleheader rule survives, applied per club: the second game of a
    repeated matchup takes each side's second name rather than repeating the
    first. */
+/* How far the opposing starter alone may move a bat's chance, either way. A
+   full season of HR/9 is a real measurement, but it is measured in his park and
+   behind his fielders, so it is not all his — 40% is generous without being
+   credulous. */
+const ARM_SWING = 0.4;
+
+/* League HR/9 among the starters on file, innings-weighted so a long reliever
+   with nine innings does not count for as much as a starter with a hundred and
+   forty. Stands in for a probable who has not been announced. */
+function leagueHr9(){
+  let hr = 0, ip = 0;
+  for(const key in S.pitchers){
+    const p = S.pitchers[key];
+    if(p.hr9 == null || !p.ip) continue;
+    hr += p.hr9 * p.ip / 9;
+    ip += p.ip;
+  }
+  return ip > 0 ? 9 * hr / ip : null;
+}
+
 function bestBats(g){
   const n = matchupIndex(g);
   /* Common to the whole ballpark, so this does not change which bat is picked
@@ -1770,21 +1799,38 @@ function bestBats(g){
   const cond = hrConditions(g);
   const forClub = (batTeam, oppPid) => {
     const p = S.pitchers[oppPid];
-    if(!p || p.hr9 == null) return null;
+    /* The opposing starter's HR/9 multiplies every bat in that lineup by the
+       same amount, so it has no say in which one is named — only in how likely
+       he is to go deep. A probable who has not been posted therefore cost the
+       whole club its pick for no reason: a lineup facing an unnamed arm still
+       has a most dangerous bat. The league's starters stand in until the real
+       one is announced, and the row says as much. */
+    const known = !!(p && p.hr9 != null);
+    const hr9 = known ? p.hr9 : leagueHr9();
+    if(hr9 == null) return null;
     const ranked = [];
     for(const b of (S.hitters[batTeam] || []).slice(0, 5)){
       if(!b.perPA) continue;
       const r = watchRate(b);
-      ranked.push({ score:r.rate * p.hr9, batter:b.name, batterId:b.id, team:batTeam,
-                    perPA:b.perPA, hr:b.hr, pitcher:p.name, hr9:p.hr9,
-                    blended:r.rate, form:r.form });
+      ranked.push({ score:r.rate * hr9, batter:b.name, batterId:b.id, team:batTeam,
+                    perPA:b.perPA, hr:b.hr, pitcher:known ? p.name : null, hr9,
+                    tba:!known, blended:r.rate, form:r.form });
     }
     if(!ranked.length) return null;
     ranked.sort((a, b) => b.score - a.score);
     const i = Math.min(n, ranked.length - 1);
     const chosen = i > 0 ? Object.assign({}, ranked[i], { rank:i }) : ranked[i];
-    const mult = cond ? cond.mult : 1;
-    return Object.assign(chosen, { cond,
+    /* The arm belongs in the number, not only in the ranking. HR/9 decided which
+       bat was named and then played no part in how likely he was to go deep, so
+       a hitter facing a homer-prone starter and one facing a groundballer were
+       graded against the same expectation. Measured against the league rather
+       than used raw, and damped, because a starter's HR/9 carries his park and
+       his defence inside it. */
+    const lg = leagueHr9();
+    const armMult = lg && lg > 0
+      ? Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, hr9 / lg)) : 1;
+    const mult = (cond ? cond.mult : 1) * armMult;
+    return Object.assign(chosen, { cond, armMult,
       adjusted:chosen.blended * mult,
       tonight:hrGameProb(chosen.blended * mult) });
   };
@@ -1803,8 +1849,12 @@ const PA_PER_GAME = 4.3;
 const hrGameProb = rate =>
   rate > 0 && rate < 1 ? 1 - Math.pow(1 - rate, PA_PER_GAME) : null;
 
-const watchOf = mu => ({ name:mu.batter, team:mu.team, id:mu.batterId,
-                         p:mu.tonight != null ? mu.tonight : hrGameProb(mu.blended) });
+const watchOf = mu => Object.assign(
+  { name:mu.batter, team:mu.team, id:mu.batterId,
+    p:mu.tonight != null ? mu.tonight : hrGameProb(mu.blended) },
+  /* Picked against a stand-in rather than the real arm, so it can be improved
+     on while the game has still not started. */
+  mu.tba ? { tba:true } : null);
 
 /* Records written before this change named one bat and stored it singular.
    Both shapes are read through here, so an old card still grades. */
@@ -4140,14 +4190,24 @@ function cardBlock(g){
         const rows = [[g.aProbId, g.hid, g.aid], [g.hProbId, g.aid, g.hid]]
           .map(([pid, oppId, ownId]) => {
             const k = projectStrikeouts(pid, oppId);
-            if(!k) return null;
+            /* A strikeout projection is about a named pitcher, so unlike the bat
+               pick there is no standing in for him. Saying the probable has not
+               been posted is better than a row quietly going missing. */
+            if(!k) return pid ? null : { ownId, tba:true };
             return { pid, ownId, k, name:(S.pitchers[pid] || {}).name };
           }).filter(Boolean);
-        if(!rows.length) return "";
+        if(!rows.length || rows.every(r => r.tba)) return "";
         /* The projected number is the point of the row, so it must never be the
            thing that gets squeezed out. The detail is abbreviated and allowed to
            truncate instead. */
-        return rows.map(r => '<div class="cbrow">'
+        return rows.map(r => r.tba
+          ? '<div class="cbrow">'
+            + '<span class="cblabel">K</span>'
+            + '<span class="tbar" style="background:' + col(r.ownId) + '" aria-hidden="true"></span>'
+            + '<span class="cbval">' + ab(r.ownId) + ' <em>starter not posted</em></span>'
+            + '<span class="cbodds sm"></span>'
+            + '</div>'
+          : '<div class="cbrow">'
           + '<span class="cblabel">K</span>'
           + '<span class="tbar" style="background:' + col(r.ownId) + '" aria-hidden="true"></span>'
           + '<span class="cbval">' + esc(lastName(r.name))
@@ -4174,10 +4234,10 @@ function cardBlock(g){
               ? (mu.cond.mult > 1 ? '+' : "")
                 + Math.round((mu.cond.mult - 1) * 100) + '% air/wind \u00b7 '
               : "")
-          + (mu.form
-              ? 'L5 ' + mu.form.hr + ' HR \u00b7 ' + esc(lastName(mu.pitcher))
-                + ' ' + mu.hr9.toFixed(1)
-              : 'v ' + esc(lastName(mu.pitcher)) + ' ' + mu.hr9.toFixed(1) + ' HR/9')
+          + (mu.form ? 'L5 ' + mu.form.hr + ' HR \u00b7 ' : "")
+          + (mu.tba
+              ? 'starter TBA \u00b7 lg ' + mu.hr9.toFixed(1)
+              : esc(lastName(mu.pitcher)) + ' ' + mu.hr9.toFixed(1) + ' HR/9')
           + '</span>'
         + '</div>').join("")
     + (wx
