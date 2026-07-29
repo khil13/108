@@ -549,7 +549,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "86 — an unposted starter no longer costs a club its bat";
+const BUILD = "87 — the record shows what it stakes, not just what it calls";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -569,6 +569,11 @@ const REGRESS_SEASON = 40;
 const REGRESS_GAME = 400;
 const REGRESS = REGRESS_SEASON;   // what the season simulation uses
 const HFA = 0.16;            // log-odds home edge; MLB homes win about 54%
+/* The number any forecast has to beat: predict the home side, at the rate home
+   sides actually win, and never look at who is playing. Shared by the season
+   replay and by the record, so the two cannot quietly disagree about what
+   "better than nothing" means. */
+const HOME_BASE = 0.540;
 /* Raised from 0.10 on the calibration's evidence: 0.15 scored better over the
    same 1,192 games, and starters were the only component that beat the
    home-field baseline at all. */
@@ -1176,7 +1181,7 @@ function backtest(recencyW, useSP, regress, spWeight, usePyth){
       preds.push({ p, homeWon, projTotal, lgTotal, actualTotal:g.hs + g.as, spApplied });
 
       // Baseline to beat: home field and nothing else.
-      baseBrier += Math.pow(0.540 - (homeWon ? 1 : 0), 2);
+      baseBrier += Math.pow(HOME_BASE - (homeWon ? 1 : 0), 2);
       baseN++;
     }
 
@@ -1616,7 +1621,7 @@ function scorecardSummary(){
   if(!settled.length) return null;
   const called = settled.filter(e => e.hs !== e.as);
 
-  let right = 0, brier = 0, high = 0, highRight = 0;
+  let right = 0, brier = 0, baseBrier = 0, high = 0, highRight = 0;
   for(const e of called){
     const p = gradedP(e);
     const homeWon = e.hs > e.as;
@@ -1629,6 +1634,8 @@ function scorecardSummary(){
        almost never clears measures nothing. */
     if(conf >= CONF_BAR){ high++; if(hit) highRight++; }
     brier += Math.pow(p - (homeWon ? 1 : 0), 2);
+    /* Scored against the same games, so the comparison is like for like. */
+    baseBrier += Math.pow(HOME_BASE - (homeWon ? 1 : 0), 2);
   }
 
   let absErr = 0, totN = 0, watchN = 0, watchHr = 0, kN = 0, kErr = 0, kBias = 0;
@@ -1655,6 +1662,7 @@ function scorecardSummary(){
   const n = called.length;
   return { n, drawn:settled.length - n, right,
            acc:n ? right / n : null, brier:n ? brier / n : null,
+           baseBrier:n ? baseBrier / n : null,
            runMAE:totN ? absErr / totN : null, totN,
            watchN, watchHr, watchExp, watchExpN, watchHrP, watchDnp,
            watchSd:watchVar > 0 ? Math.sqrt(watchVar) : null,
@@ -4490,6 +4498,24 @@ function scorecardBlock(){
           ? 'Run projections missed by ' + (s.runMAE != null ? s.runMAE.toFixed(1) : "\u2014")
             + (s.kMAE != null ? ', strikeout projections by ' + s.kMAE.toFixed(1) : "")
             + '. '
+          : "")
+      + (s.brier != null && s.baseBrier != null
+          ? (() => {
+              const d = s.baseBrier - s.brier;
+              /* The tally above counts every miss the same. This does not: it
+                 charges for how much was staked, so a confident wrong call costs
+                 more than a hesitant one. It still says nothing about margin —
+                 a one-run loss and a rout are identical here too, because the
+                 model named a winner and not a score. */
+              return 'Brier ' + s.brier.toFixed(3) + ' against ' + s.baseBrier.toFixed(3)
+                + ' for backing the home side every time'
+                + (Math.abs(d) < 0.002 ? ', level'
+                    : d > 0 ? ', which is better'
+                            : ', which is worse')
+                + '. That one charges for confidence, so a 64% miss costs more '
+                + 'than a 52% one. '
+                + 'Neither number cares about the margin. ';
+            })()
           : "")
       + (s.watchExpN
           ? (() => {
