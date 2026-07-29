@@ -121,7 +121,7 @@ ul{margin:0;padding:0;list-style:none;}
      standings row stretched to 1,140px leaves the club name marooned from its
      numbers, so tables keep a readable width and centre themselves. */
   .dblock,.method,.thead,.trow,.pthead,.prow,.othead,.orow,.follow,.since,
-  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk{
+  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk,.cdio{
     max-width:740px;margin-left:auto;margin-right:auto;}
 }
 @media(min-width:1600px){
@@ -387,6 +387,13 @@ ul{margin:0;padding:0;list-style:none;}
 .fitem.mine .fdesc{color:var(--chalk);}
 .chip.grass{color:var(--grass);border-color:#1E4634;background:#0F2A1D;}
 .chip.blush{color:var(--blush);border-color:#5E2029;background:#2A1418;}
+.cdio{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:16px 0 0;}
+/* The file input itself is unstylable across browsers, so the label is the
+   button and the input hides inside it. */
+.cdio label{position:relative;overflow:hidden;display:inline-block;cursor:pointer;}
+.cdio input[type="file"]{position:absolute;inset:0;opacity:0;width:100%;height:100%;
+  cursor:pointer;}
+.ioMsg{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--slate);}
 .cdday{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
   color:#738E93;margin:20px 0 2px;}
 /* One game and its picks form a block. Four columns competing for a phone's
@@ -542,7 +549,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "81 — the record grades the number the card showed";
+const BUILD = "85 — the bat pick knows about the air and the wind";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -611,7 +618,7 @@ const S = {
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
   bullpens:{}, bpLg:null, teamBat:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
-  odds:null, simBusy:false,
+  odds:null, simBusy:false, calOut:null, ioMsg:null,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
 };
 
@@ -1111,9 +1118,10 @@ const BT_MIN_GP = 25;
 
 /* regress and spWeight default to the app's own constants, but can be varied
    so the sweep below can search for better ones. */
-function backtest(recencyW, useSP, regress, spWeight){
+function backtest(recencyW, useSP, regress, spWeight, usePyth){
   const REG = regress == null ? REGRESS : regress;
   const SPW = spWeight == null ? SP_WEIGHT : spWeight;
+  const PY = usePyth == null ? USE_PYTH : usePyth;
   const games = S.finals;
   if(!Array.isArray(games) || games.length < 200) return null;
 
@@ -1131,8 +1139,18 @@ function backtest(recencyW, useSP, regress, spWeight){
       const rate = t => {
         const ten = t.recent.slice(-10);
         const tw = ten.filter(Boolean).length;
-        return (t.w + recencyW * tw + REG / 2)
-             / (t.w + t.l + recencyW * ten.length + REG);
+        const g = t.w + t.l;
+        /* The state walked forward already carries runs scored and allowed —
+           they were only ever used for the run projection. Strength can come
+           from them instead of the record, using nothing the model would not
+           have known on the day. */
+        let w = t.w;
+        if(PY && g > 0){
+          const p = pythPct(t.rs, t.ra);
+          if(p != null) w = p * g;
+        }
+        return (w + recencyW * tw + REG / 2)
+             / (g + recencyW * ten.length + REG);
       };
       const lg = p => Math.log(p / (1 - p));
       let d = lg(rate(h)) - lg(rate(a)) + HFA;
@@ -1306,6 +1324,34 @@ function saveScorecard(){
   try{ localStorage.setItem(CARD_KEY, JSON.stringify(S.card)); }catch(e){}
 }
 
+/* Entries written before the settlement was keyed by game id could have been
+   scored against the other half of a doubleheader: the wrong final, and picks
+   graded from a box score that was not theirs. Build 80 stopped that happening;
+   it could not undo what was already saved, and nothing self-heals, because a
+   graded pick is never revisited.
+
+   So this discards the *results* of anything written under the old scheme —
+   score, bat outcomes, strikeout counts — while keeping the predictions
+   themselves, which were always sound. Settlement then runs again from scratch,
+   by game id, and grades each pick from its own box score. Predictions are not
+   touched; nothing is re-predicted with hindsight. */
+const CARD_V = 2;
+function repairScorecard(){
+  let n = 0;
+  for(const key in S.card){
+    const e = S.card[key];
+    if(!e || e.v >= CARD_V) continue;
+    delete e.hs; delete e.as;
+    delete e.boxTried; delete e.boxTries;
+    for(const w of watchList(e)) delete w.result;
+    if(Array.isArray(e.ks)) for(const k of e.ks){ delete k.actual; delete k.scratched; }
+    e.v = CARD_V;
+    n++;
+  }
+  if(n){ S.diag.repaired = n; S.cardDirty = true; saveScorecard(); }
+  return n;
+}
+
 /* Called when the Plays tab renders a game that has not started. Records the
    prediction once and never revises it. */
 function ksFor(g){
@@ -1372,6 +1418,7 @@ function recordPrediction(g){
     total:tot ? tot.total : null,
     watches:bats.map(watchOf),
     ks:ksFor(g),
+    v:CARD_V,
     at:new Date().toISOString()
   };
   S.cardDirty = true;
@@ -1427,14 +1474,21 @@ function settleScorecard(){
     if(Array.isArray(e.ks)){
       for(const k of e.ks){
         if(k.actual != null) continue;
-        const b = S.box[k.pid];
-        if(b && b.pK != null) k.actual = b.pK;
+        /* Scoped to this game, so absence now means he was not in it — but the
+           live poll only ever captured games it happened to watch, so a missing
+           line here is as likely to mean "never polled" as "never pitched".
+           Grading yes, scratch verdicts no; those come from the box score
+           fetched deliberately in settlePicksFromBox. */
+        const b = S.box[boxKey(g.pk, k.pid)];
+        if(pitchedIn(b) && b.pK != null) k.actual = b.pK;
       }
     }
     for(const w of watchList(e)){
-      if(w.result || w.id == null) continue;
-      const b = S.box[w.id];
-      if(b) w.result = { hr:b.todayHr != null ? b.todayHr : null, line:b.today || null };
+      if(w.result || w.dnp || w.id == null) continue;
+      const b = S.box[boxKey(g.pk, w.id)];
+      if(!b) continue;                          // never polled; not evidence of anything
+      if(!battedIn(b)){ w.dnp = true; continue; }
+      w.result = { hr:b.todayHr != null ? b.todayHr : null, line:b.today || null };
     }
     changed = true;
   }
@@ -1463,15 +1517,23 @@ function repairWatchId(e){
   }
 }
 
+/* Three attempts, not one. The old code claimed a game before the fetch and
+   never released it, so a single dropped request — a tunnel, a flaky minute of
+   wifi — abandoned that game's picks permanently. Counting instead means a
+   transient failure is retried on a later render while a game whose box score
+   genuinely has nothing to offer still stops being asked about. */
+const BOX_TRIES = 3;
+
 async function settlePicksFromBox(){
   const pending = [];
   for(const key in S.card){
     const e = S.card[key];
     if(!e || e.hs == null) continue;
     repairWatchId(e);
-    if(e.boxTried) continue;
-    const needWatch = watchList(e).some(w => w.id != null && !w.result);
-    const needK = Array.isArray(e.ks) && e.ks.some(k => k.actual == null);
+    if((e.boxTries || 0) >= BOX_TRIES) continue;
+    const needWatch = watchList(e).some(w => w.id != null && !w.result && !w.dnp);
+    const needK = Array.isArray(e.ks)
+      && e.ks.some(k => k.actual == null && !k.scratched);
     if(needWatch || needK) pending.push(key);
   }
   if(!pending.length) return;
@@ -1479,24 +1541,56 @@ async function settlePicksFromBox(){
   let changed = false;
   for(const key of pending.slice(0, 6)){
     const e = S.card[key];
-    e.boxTried = true;                 // claimed, pass or fail
+    e.boxTries = (e.boxTries || 0) + 1;
     let j;
-    try{ j = await getJSON(MLB + "/game/" + key + "/boxscore"); }catch(err){ continue; }
+    try{ j = await getJSON(MLB + "/game/" + key + "/boxscore"); }
+    catch(err){ changed = true; continue; }   // the attempt count is worth saving
+    /* It answered, so whatever it says is final: anything still ungraded below
+       is absent from the game rather than unreachable. */
+    e.boxTries = BOX_TRIES;
     const box = readBoxscore(j);
     for(const w of watchList(e)){
-      if(w.id == null || w.result) continue;
+      if(w.id == null || w.result || w.dnp) continue;
+      /* This box score is the game's own, so a bat that is not in it, or is in
+         it without a plate appearance, did not play. Recorded as such rather
+         than failed. */
       const b = box[w.id];
-      if(b) w.result = { hr:b.todayHr != null ? b.todayHr : 0, line:b.today || null };
+      if(battedIn(b)) w.result = { hr:b.todayHr != null ? b.todayHr : 0, line:b.today || null };
+      else w.dnp = true;
     }
     if(Array.isArray(e.ks)) for(const k of e.ks){
       if(k.actual != null) continue;
+      /* This box score is the game's own, so absence is meaningful: a probable
+         who is not in it, or is in it without having thrown, did not pitch.
+         Recorded as such rather than graded — the projection was for a start
+         that never happened, and marking it wrong would say something false
+         about the pitcher and about the model. */
       const b = box[k.pid];
-      if(b && b.pK != null) k.actual = b.pK;
+      if(pitchedIn(b)){ if(b.pK != null) k.actual = b.pK; }
+      else k.scratched = true;
     }
     changed = true;
   }
   if(changed || S.cardDirty){ saveScorecard(); S.cardDirty = false; render(); }
 }
+
+/* How long before the record means anything.
+
+   Two figures from the same normal approximation to a coin flip. detectableAt
+   is the hit rate that would stand out from chance at the sample you have:
+   anything below it is indistinguishable from a run of luck. gamesNeeded runs it
+   the other way — the sample at which a given real edge would separate from 50%.
+
+   Both use the 95% two-sided z of 1.96 and the variance of a fair coin, which is
+   the widest case and so the conservative one. The point is not the exact
+   number; it is that "too few to mean much yet" has a size, and the size is
+   larger than it feels. */
+const detectableAt = n => n > 0 ? 0.5 + 1.96 * Math.sqrt(0.25 / n) : null;
+const gamesNeeded = p => {
+  const edge = Math.abs(p - 0.5);
+  if(edge < 1e-6) return Infinity;
+  return Math.ceil(Math.pow(1.96, 2) * 0.25 / (edge * edge));
+};
 
 /* What the card put on screen, which is what the record grades. Entries written
    before build 81 stored only the model's raw number, so that is the fallback. */
@@ -1529,11 +1623,20 @@ function scorecardSummary(){
   }
 
   let absErr = 0, totN = 0, watchN = 0, watchHr = 0, kN = 0, kErr = 0, kBias = 0;
+  let watchExp = 0, watchVar = 0, watchExpN = 0, watchHrP = 0, watchDnp = 0;
   for(const e of settled){
     if(e.total != null){ absErr += Math.abs(e.total - (e.hs + e.as)); totN++; }
     for(const w of watchList(e)){
+      if(w.dnp){ watchDnp++; continue; }
       if(!w.result) continue;
       watchN++; if(w.result.hr > 0) watchHr++;
+      /* Each pick carried its own chance of a homer, so the expectation is the
+         sum of them rather than a single league rate — and the variance comes
+         from the same place, which is what makes "unlucky" measurable. */
+      if(w.p != null){
+        watchExp += w.p; watchVar += w.p * (1 - w.p); watchExpN++;
+        if(w.result.hr > 0) watchHrP++;
+      }
     }
     if(Array.isArray(e.ks)) for(const k of e.ks){
       if(k.actual == null) continue;
@@ -1544,7 +1647,9 @@ function scorecardSummary(){
   return { n, drawn:settled.length - n, right,
            acc:n ? right / n : null, brier:n ? brier / n : null,
            runMAE:totN ? absErr / totN : null, totN,
-           watchN, watchHr, high, highRight,
+           watchN, watchHr, watchExp, watchExpN, watchHrP, watchDnp,
+           watchSd:watchVar > 0 ? Math.sqrt(watchVar) : null,
+           high, highRight,
            kN, kMAE:kN ? kErr / kN : null, kBias:kN ? kBias / kN : null };
 }
 
@@ -1657,6 +1762,12 @@ function matchupIndex(g){
    first. */
 function bestBats(g){
   const n = matchupIndex(g);
+  /* Common to the whole ballpark, so this does not change which bat is picked
+     within a game — both clubs stand in the same air. What it changes is how
+     likely the pick is to pay off, and so the bar the record grades it against:
+     a bat at Coors with the wind out is not the same bet as the same bat in a
+     San Francisco marine layer, and scoring them against one number was wrong. */
+  const cond = hrConditions(g);
   const forClub = (batTeam, oppPid) => {
     const p = S.pitchers[oppPid];
     if(!p || p.hr9 == null) return null;
@@ -1671,13 +1782,29 @@ function bestBats(g){
     if(!ranked.length) return null;
     ranked.sort((a, b) => b.score - a.score);
     const i = Math.min(n, ranked.length - 1);
-    return i > 0 ? Object.assign({}, ranked[i], { rank:i }) : ranked[i];
+    const chosen = i > 0 ? Object.assign({}, ranked[i], { rank:i }) : ranked[i];
+    const mult = cond ? cond.mult : 1;
+    return Object.assign(chosen, { cond,
+      adjusted:chosen.blended * mult,
+      tonight:hrGameProb(chosen.blended * mult) });
   };
   // Visitors bat against the home starter, and the reverse.
   return [forClub(g.aid, g.hProbId), forClub(g.hid, g.aProbId)].filter(Boolean);
 }
 
-const watchOf = mu => ({ name:mu.batter, team:mu.team, id:mu.batterId });
+/* A rate per plate appearance is not a chance of a home run tonight, and the
+   difference is the whole reason "1 of 16" was unreadable. A regular gets about
+   4.3 plate appearances in a game he starts, so a bat at one homer per twenty
+   goes deep in roughly a fifth of his games — not a twentieth.
+
+   Storing this with each pick is what lets the record say how many homers were
+   expected, and so whether a lean stretch is a bad picker or a bad fortnight. */
+const PA_PER_GAME = 4.3;
+const hrGameProb = rate =>
+  rate > 0 && rate < 1 ? 1 - Math.pow(1 - rate, PA_PER_GAME) : null;
+
+const watchOf = mu => ({ name:mu.batter, team:mu.team, id:mu.batterId,
+                         p:mu.tonight != null ? mu.tonight : hrGameProb(mu.blended) });
 
 /* Records written before this change named one bat and stored it singular.
    Both shapes are read through here, so an old card still grades. */
@@ -2090,6 +2217,68 @@ function windRelative(fromDeg, cf){
   return WIND_ZONES[Math.round(a / 45) % 8];
 }
 
+/* The same geometry as a number rather than a label: how much of the wind is
+   actually pushing toward the outfield, in mph. Positive blows out, negative in,
+   and a crosswind lands near zero because it does neither. The eight zones above
+   are for reading; this is for arithmetic. */
+function windOut(fromDeg, mph, cf){
+  if(fromDeg == null || cf == null || mph == null) return null;
+  const toward = (fromDeg + 180) * Math.PI / 180;
+  return mph * Math.cos(toward - cf * Math.PI / 180);
+}
+
+/* ---------------- conditions, as they bear on a home run ----------------
+   The app has measured the wind and the air at every ballpark since the weather
+   went in, printed both on the card, and never once let them touch the bat pick
+   — which is the pick they bear on most. A fly ball at the wall is decided by
+   drag and by what the air is doing, and both are known here.
+
+   Air is physics and already computed: density from the measured pressure and
+   temperature, as a share of the sea-level standard. Thinner air is less drag
+   and more carry, which is the whole of why Coors plays as it does. The
+   elasticity below converts a density shortfall into a home run rate, and it is
+   set so that Coors on a summer evening — around 85% of standard — lifts the
+   rate by roughly a fifth, which is the neighbourhood of that park's measured
+   home run factor.
+
+   Wind is a judgement, and a deliberately small one: a percent and a half per
+   mph blowing out, capped at a quarter either way, so a 15 mph gale out to
+   centre moves the number by about a fifth and a hurricane cannot move it by
+   more than a quarter. Published work on Wrigley puts the real effect higher
+   than this. Damped on purpose, since the forecast is for first pitch and the
+   wind at 9pm is not the wind at 7.
+
+   Neither coefficient is fitted against results, exactly as SP_WEIGHT was not
+   before the calibration existed. They are stated here so they can be argued
+   with, and the record now grades every pick against the number they produce,
+   which is how they will eventually be found wrong. */
+const AIR_ELASTICITY = 1.3;
+const WIND_PER_MPH = 0.015;
+const WIND_CAP = 0.25;
+
+function hrConditions(g){
+  const v = S.venues[g.venueId];
+  const w = wxAt(g.venueId, g.start);
+  if(!w) return null;
+  const roofShut = !!(v && v.roof && /dome|indoor|closed/i.test(v.roof));
+  let mult = 1, air = null, out = null;
+  if(w.air != null){
+    air = w.air;
+    mult *= 1 + AIR_ELASTICITY * ((100 - w.air) / 100);
+  }
+  /* A closed roof means there is no wind in play, whatever the forecast says
+     about the weather outside it. */
+  if(!roofShut){
+    const cf = cfBearing((v && v.name) || g.venue);
+    const o = windOut(w.dir, w.wind, cf);
+    if(o != null){
+      out = o;
+      mult *= 1 + Math.max(-WIND_CAP, Math.min(WIND_CAP, WIND_PER_MPH * o));
+    }
+  }
+  return { mult, air, out, roofShut, temp:w.temp, wind:w.wind, dir:w.dir };
+}
+
 async function load(){
   const yr = new Date().getFullYear();
   try{
@@ -2223,6 +2412,43 @@ function playKind(event){
   return { tag:e || "play", tone:"slate" };
 }
 
+/* Did this line come from someone who actually batted?
+
+   The mirror of pitchedIn, and the same bug: a rostered player who sat comes
+   back with an empty batting block, which was being read as a genuine nought
+   and marked wrong. Lineups are not published until a few hours before first
+   pitch, so the pick is made blind — holding a regular's rest day against it
+   grades the manager's decision, not the model's. */
+function battedIn(b){
+  if(!b) return false;
+  if(b.batPA != null) return b.batPA > 0;
+  if(b.batAB != null && b.batAB > 0) return true;
+  return !!b.today;
+}
+
+/* A box-score line belongs to a game as much as to a player, and the two have to
+   be looked up together — see loadBoxscores. */
+const boxKey = (pk, pid) => String(pk) + ":" + String(pid);
+
+/* Did this line come from someone who actually pitched?
+
+   MLB lists every rostered player in a boxscore, and one who never left the
+   bullpen can come back with a zeroed pitching block rather than an absent one.
+   The record was reading that nought as a real result and grading it against the
+   projection — a starter who was scratched showed up as an eight-strikeout miss,
+   which is both wrong about him and quietly ruinous for the strikeout average.
+
+   Batters faced is the cleanest signal; pitches and innings are checked too,
+   since a reliever pulled mid-batter can finish with none of the three but is
+   still not a scratch if he threw. A genuine nought — took the mound, recorded
+   no strikeouts — passes all three and is graded, as it should be. */
+function pitchedIn(b){
+  if(!b) return false;
+  if(b.pBF != null && b.pBF > 0) return true;
+  if(b.pitches != null && b.pitches > 0) return true;
+  return (inningsOf(b.pIp) || 0) > 0;
+}
+
 /* One box score, reduced to what the app uses: each player's season line, what
    he did tonight, and a pitcher's count. Shared by the live poll and by the
    settlement pass that grades finished picks. */
@@ -2243,12 +2469,20 @@ function readBoxscore(j){
         ops:sb.ops && sb.ops !== "-" ? sb.ops : null,
         today:tb.summary || null,
         todayHr:tb.homeRuns != null ? tb.homeRuns : null,
+        /* Whether he came to the plate at all — see battedIn. A pinch runner
+           counts as having played but never had a chance to go deep, so plate
+           appearances are the measure rather than mere presence. */
+        batPA:tb.plateAppearances != null ? tb.plateAppearances : null,
+        batAB:tb.atBats != null ? tb.atBats : null,
         /* MLB has used both names for this field over the years. */
         pitches:tp.numberOfPitches != null ? tp.numberOfPitches
                : tp.pitchesThrown != null ? tp.pitchesThrown : null,
         pIp:tp.inningsPitched || null,
         pEr:tp.earnedRuns != null ? tp.earnedRuns : null,
-        pK:tp.strikeOuts != null ? tp.strikeOuts : null
+        pK:tp.strikeOuts != null ? tp.strikeOuts : null,
+        /* Whether he took the mound at all, which is a different question from
+           what he did there — see pitchedIn. */
+        pBF:tp.battersFaced != null ? tp.battersFaced : null
       };
     }
   }
@@ -2267,7 +2501,16 @@ async function loadBoxscores(){
   const age = S.boxAt ? Date.now() - S.boxAt : Infinity;
   if(age < 60000) return;
 
-  const out = Object.assign({}, S.box);
+  /* Keyed by game and player, not player alone.
+
+     A flat player map was never cleared and never scoped, so a line survived
+     from one game to the next and from one day to the next — and settlement,
+     looking a player up by id, could grade a pick against work he did somewhere
+     else entirely. Scoping the key makes that impossible; pruning to the games
+     currently in the window stops it growing without limit. */
+  const out = {};
+  const keep = new Set(S.games.map(g => String(g.pk)));
+  for(const k in S.box) if(keep.has(k.slice(0, k.indexOf(":")))) out[k] = S.box[k];
   const lastPlays = Object.assign({}, S.lastPlay);
   const CHUNK = 4;
   for(let i = 0; i < live.length; i += CHUNK){
@@ -2294,7 +2537,8 @@ async function loadBoxscores(){
 
       let j;
       try{ j = await getJSON(MLB + "/game/" + g.pk + "/boxscore"); }catch(e){ return; }
-      Object.assign(out, readBoxscore(j));
+      const one = readBoxscore(j);
+      for(const pid in one) out[boxKey(g.pk, pid)] = one[pid];
     }));
   }
   S.box = out;
@@ -2426,15 +2670,50 @@ const pairOf = s => {
   return m ? { w:Number(m[1]), l:Number(m[2]) } : null;
 };
 
-/* A club's true rate: season record, plus its last ten counted again K times,
-   then regressed toward .500. */
+/* ---------------- Pythagorean expectation ----------------
+   A record is a noisy read on strength. Two clubs at 55-50 are not the same
+   club if one got there on blowout wins and one-run losses, and the calibration
+   said as much: records alone lost to simply knowing who was at home. Run
+   differential separates them, and is the oldest well-attested improvement on
+   W-L there is.
+
+   The exponent is the conventional 1.83. Nothing here is asserted to work —
+   USE_PYTH is a hypothesis, and the calibration on the Odds tab now runs the
+   season both ways and reports which won. If run differential loses there, set
+   this to false and the app goes back to records. */
+const USE_PYTH = true;
+const PYTH_EXP = 1.83;
+
+function pythPct(rs, ra){
+  if(!(rs > 0) || !(ra > 0)) return null;
+  const a = Math.pow(rs, PYTH_EXP), b = Math.pow(ra, PYTH_EXP);
+  return a + b > 0 ? a / (a + b) : null;
+}
+
+/* The wins a club's run differential says it should have, over the games it has
+   actually played — so it drops into the same regression as a real win count
+   and the two are directly comparable. Null whenever runs are not loaded yet,
+   in which case every caller falls back to the record. */
+function pythWins(id){
+  const r = S.runs[id];
+  if(!r || !r.g) return null;
+  const p = pythPct(r.rs, r.ra);
+  return p == null ? null : { w:p * r.g, g:r.g };
+}
+
+/* A club's true rate: its strength over the season, plus its last ten counted
+   again K times, then regressed toward .500. Strength is run differential where
+   the season figures have loaded and the plain record otherwise. */
 function teamRate(t, regress){
   const R = regress == null ? REGRESS_SEASON : regress;
   const k = RECENCY_W;
   const ten = pairOf(t.l10);
   const addW = ten ? k * ten.w : 0;
   const addG = ten ? k * (ten.w + ten.l) : 0;
-  return (t.w + addW + R / 2) / (t.w + t.l + addG + R);
+  const eff = USE_PYTH ? pythWins(t.id) : null;
+  const w = eff ? eff.w : t.w;
+  const g = eff ? eff.g : t.w + t.l;
+  return (w + addW + R / 2) / (g + addG + R);
 }
 
 /* A starter's effective ERA, with his last three outings counted again K
@@ -2610,8 +2889,8 @@ function diamond(on){
 }
 
 /* The batter's season line, when a box score has been read. */
-function batLine(id){
-  const b = id != null ? S.box[id] : null;
+function batLine(pk, id){
+  const b = id != null ? S.box[boxKey(pk, id)] : null;
   if(!b) return "";
   const bits = [];
   if(b.avg) bits.push(b.avg);
@@ -2622,8 +2901,8 @@ function batLine(id){
 
 /* Tonight's work for whoever is pitching: count first, since that is the one
    that tells you the bullpen is coming. */
-function pitchLine(id){
-  const b = id != null ? S.box[id] : null;
+function pitchLine(pk, id){
+  const b = id != null ? S.box[boxKey(pk, id)] : null;
   if(!b) return "";
   const bits = [];
   if(b.pitches != null) bits.push(b.pitches + " pitches");
@@ -2822,7 +3101,7 @@ function onMound(g){
   const teamId = /top/i.test(g.half || "") ? g.hid : g.aid;
   return '<div class="pblock"><h5 class="plabel">On the mound</h5>'
     + pitcherLine(teamId, g.pitcherId, g.pitcher)
-    + pitchLine(g.pitcherId) + '</div>';
+    + pitchLine(g.pk, g.pitcherId) + '</div>';
 }
 
 /* The detail blocks are the bulk of a card's height, so they fold away by
@@ -2932,7 +3211,7 @@ function gameCard(g){
           + (g.batter
               // Between halves nobody is at the plate; MLB is naming who is next.
               ? '<span><em>' + (/^(top|bottom)$/i.test(g.half || "") ? "AB" : "DUE UP")
-                + '</em>' + esc(g.batter) + batLine(g.batterId) + '</span>'
+                + '</em>' + esc(g.batter) + batLine(g.pk, g.batterId) + '</span>'
               : "")
           + (g.onDeck || g.inHole
               ? '<span><em>NEXT</em>'
@@ -3202,11 +3481,17 @@ function renderToday(){
     + 'a raw bearing means unknown, never guessed.</p>'
     + '<p class="note">Power on show is what has already happened: each club\'s five '
     + 'leading home run hitters, how often they have gone deep per plate appearance, and '
-    + 'the HR/9 of the arm they face. These are rates, not forecasts. Read them alongside '
-    + 'the wind and air above and draw your own conclusion — I have deliberately not '
-    + 'multiplied them into a single "chance of a homer tonight", because every weight in '
-    + 'that multiplication would be invented and the answer would look far more precise '
-    + 'than it could possibly be.</p>'
+    + 'the HR/9 of the arm they face. These are rates, not forecasts, and this block '
+    + 'deliberately stops there.</p>'
+    + '<p class="note">The Plays tab does now multiply them into a chance for the one bat '
+    + 'it names per club, which this note used to say it would never do. What changed is '
+    + 'that the record needed a bar to grade against: "one homer in sixteen picks" means '
+    + 'nothing without knowing how many were expected. Most of that multiplication is '
+    + 'measured \u2014 the batter\u2019s rate, the pitcher\u2019s HR/9, and air density from '
+    + 'the pressure and temperature at the park. Two numbers in it are not: how much '
+    + 'thinner air lifts a home run rate, and how much a wind blowing out does. Both are '
+    + 'stated in the source, both are damped, and neither has been tested against a '
+    + 'result. Treat the percentage as the app showing its working, not as a price.</p>'
     + '<p class="note">Recent form comes from actual game logs on both sides — a '
     + 'starter\'s last three outings, a hitter\'s last five games. Those are exact, not '
     + 'sampled from a date window. Logs are per player, so a card\'s hitters are fetched '
@@ -3384,6 +3669,43 @@ function fitCalibration(preds){
   return { a, b, n:preds.length };
 }
 
+/* Applying a given fit to games it never saw.
+
+   The fit above is trained on the same games it is scored against, which the
+   caveat has always admitted. This splits the season: the first four fifths
+   train, the last fifth is held back and scored cold. If the mapping is real it
+   improves the held-out Brier; if it were only memorising, it would not.
+
+   The split is chronological rather than random, because a random one would let
+   the fit see games from either side of every held-out date — which for a model
+   built on a running season record is a subtler form of the same leak. */
+const HOLDOUT = 0.2;
+
+function scoreWith(fit, preds){
+  if(!fit || !preds || !preds.length) return null;
+  const map = p => {
+    const q = Math.min(0.999, Math.max(0.001, p));
+    const x = Math.log(q / (1 - q));
+    return 1 / (1 + Math.exp(-(fit.a * x + fit.b)));
+  };
+  let raw = 0, cal = 0;
+  for(const q of preds){
+    const y = q.homeWon ? 1 : 0;
+    raw += Math.pow(q.p - y, 2);
+    cal += Math.pow(map(q.p) - y, 2);
+  }
+  return { n:preds.length, raw:raw / preds.length, cal:cal / preds.length };
+}
+
+function holdoutCheck(preds){
+  if(!preds || preds.length < 400) return null;
+  const cut = Math.floor(preds.length * (1 - HOLDOUT));
+  const fit = fitCalibration(preds.slice(0, cut));
+  if(!fit) return null;
+  const out = scoreWith(fit, preds.slice(cut));
+  return out ? Object.assign({ fit, trained:cut }, out) : null;
+}
+
 /* Apply it, when one has been fitted. */
 function calibrate(p){
   const f = S.calFit;
@@ -3407,12 +3729,14 @@ function sweep(){
   const weights = [0, 0.10, 0.15, 0.20, 0.30];
   let best = null;
   const rows = [];
-  for(const r of regressions){
-    for(const w of weights){
-      const res = backtest(0, w > 0, r, w);
-      if(!res) continue;
-      rows.push({ regress:r, spWeight:w, brier:res.brier, n:res.n });
-      if(!best || res.brier < best.brier) best = rows[rows.length - 1];
+  for(const py of [false, true]){
+    for(const r of regressions){
+      for(const w of weights){
+        const res = backtest(0, w > 0, r, w, py);
+        if(!res) continue;
+        rows.push({ regress:r, spWeight:w, pyth:py, brier:res.brier, n:res.n });
+        if(!best || res.brier < best.brier) best = rows[rows.length - 1];
+      }
     }
   }
   return { rows, best };
@@ -3494,6 +3818,29 @@ function calibrationBlock(){
                   + 'either.') + '</p>'
         : '<p>Starters could not be tested: MLB did not return a probable pitcher for '
           + 'enough completed games, or too few had the innings to judge.</p>')
+    + (S.cal.rec && S.cal.pyth
+        ? '<h4 class="swhead">Record, or run differential?</h4>'
+          + '<div class="calhead"><span>Strength from</span><span>Games</span><span>Brier</span></div>'
+          + [["win–loss record", S.cal.rec], ["run differential", S.cal.pyth]].map(([lbl, r]) =>
+              '<div class="calrow"><span>' + lbl + '</span><span>' + r.n + '</span>'
+              + '<span class="' + (r.brier <= Math.min(S.cal.rec.brier, S.cal.pyth.brier)
+                  ? "cal-good" : "") + '">' + r.brier.toFixed(4) + '</span></div>').join("")
+          + '<p>' + (() => {
+              const d = S.cal.rec.brier - S.cal.pyth.brier;
+              if(Math.abs(d) < 5e-5)
+                return 'No measurable difference. Run differential is not buying anything '
+                  + 'here, so the extra machinery is not earning its place.';
+              return d > 0
+                ? 'Run differential wins, by ' + d.toFixed(4) + '. Two clubs on the same '
+                  + 'record are not the same club, and this is the season saying so. '
+                  + (USE_PYTH ? 'It is what the cards use.'
+                              : '<b>Set USE_PYTH to true.</b>')
+                : 'The plain record wins, by ' + Math.abs(d).toFixed(4) + '. '
+                  + (USE_PYTH ? '<b>Set USE_PYTH to false</b> \u2014 the cards are currently '
+                              + 'using the worse of the two.'
+                              : 'It is what the cards use.');
+            })() + '</p>'
+        : "")
     + (S.calFit
         ? '<h4 class="swhead">The numbers the cards now show</h4>'
           + '<p>Every displayed probability is mapped through what actually happened: '
@@ -3511,17 +3858,36 @@ function calibrationBlock(){
               + '<span>' + Math.round(p * 100) + '%</span>'
               + '<span>' + Math.round(calibrate(p) * 100) + '%</span>'
               + '<span></span></div>').join("")
-          + '<p class="caveat">Fitted on the same games it is scored against, which is mild '
-          + 'overfitting \u2014 two parameters over ' + S.calFit.n.toLocaleString()
-          + ' games, so the effect is small, but it is not an out-of-sample result.</p>'
+          + '<p class="caveat">' + (S.calOut
+              ? 'Held out: fitted on the first ' + S.calOut.trained.toLocaleString()
+                + ' games and scored on the ' + S.calOut.n.toLocaleString()
+                + ' after them, which it never saw. Brier ' + S.calOut.cal.toFixed(4)
+                + ' calibrated against ' + S.calOut.raw.toFixed(4) + ' raw. '
+                + (S.calOut.cal < S.calOut.raw - 5e-5
+                    ? 'It helps on games it was not fitted to, which is the test that '
+                      + 'matters.'
+                    : S.calOut.cal > S.calOut.raw + 5e-5
+                      ? '<b>It hurts out of sample.</b> The mapping is fitting noise, and '
+                        + 'the raw numbers were better left alone.'
+                      : 'No difference out of sample \u2014 the mapping is not doing '
+                        + 'anything a fresh game would notice.')
+                + ' The mapping applied to the cards is fitted on all '
+                + S.calFit.n.toLocaleString() + ' games, since more data makes the '
+                + 'estimate itself better; this split is how it is judged, not how it '
+                + 'is built.'
+              : 'Fitted on the same games it is scored against, and too few of them to '
+                + 'hold any back \u2014 so this is not an out-of-sample result.') + '</p>'
         : "")
     + (S.sweep && S.sweep.best
         ? '<h4 class="swhead">What the season would have chosen</h4>'
-          + '<p>Searching both weights over the same games: the best combination is '
-          + '<b>regression ' + S.sweep.best.regress + '</b> and <b>starter weight '
-          + S.sweep.best.spWeight.toFixed(2) + '</b>, giving Brier '
+          + '<p>Searching all three over the same games: the best combination is '
+          + '<b>regression ' + S.sweep.best.regress + '</b>, <b>starter weight '
+          + S.sweep.best.spWeight.toFixed(2) + '</b> and strength from <b>'
+          + (S.sweep.best.pyth ? 'run differential' : 'the win\u2013loss record')
+          + '</b>, giving Brier '
           + S.sweep.best.brier.toFixed(4) + '. The app currently uses ' + REGRESS
-          + ' and ' + SP_WEIGHT.toFixed(2) + '.'
+          + ', ' + SP_WEIGHT.toFixed(2) + ' and '
+          + (USE_PYTH ? 'run differential' : 'the record') + '.'
           + (S.sweep.best.regress > REGRESS * 2
               ? ' A far higher regression winning means team records deserve <b>less</b> '
                 + 'weight than they are getting \u2014 which matches records alone losing '
@@ -3533,7 +3899,8 @@ function calibrationBlock(){
           + '</p>'
           + '<div class="calhead"><span>Regression</span><span>SP wt</span><span>Brier</span></div>'
           + S.sweep.rows.slice().sort((a,b) => a.brier - b.brier).slice(0, 6)
-            .map(r => '<div class="calrow"><span>' + r.regress + '</span>'
+            .map(r => '<div class="calrow"><span>' + r.regress
+              + (r.pyth ? ' \u00b7 runs' : ' \u00b7 record') + '</span>'
               + '<span>' + r.spWeight.toFixed(2) + '</span>'
               + '<span class="' + (r === S.sweep.best ? "cal-good" : "") + '">'
               + r.brier.toFixed(4) + '</span></div>').join("")
@@ -3795,10 +4162,18 @@ function cardBlock(g){
         + '<span class="cblabel">Watch</span>'
         + '<span class="tbar" style="background:' + col(mu.team) + '" aria-hidden="true"></span>'
         + '<span class="cbval">' + esc(lastName(mu.batter))
+          + (mu.tonight != null
+              ? ' <b>' + Math.round(mu.tonight * 100) + '%</b>'
+              : "")
           + ' <em>1 per ' + Math.round(mu.blended ? 1 / mu.blended : mu.perPA)
           + ' PA</em></span>'
         + '<span class="cbodds sm">'
           + (mu.rank ? 'next best \u00b7 ' : "")
+          /* What the ballpark did to it, when it did anything worth naming. */
+          + (mu.cond && Math.abs(mu.cond.mult - 1) >= 0.03
+              ? (mu.cond.mult > 1 ? '+' : "")
+                + Math.round((mu.cond.mult - 1) * 100) + '% air/wind \u00b7 '
+              : "")
           + (mu.form
               ? 'L5 ' + mu.form.hr + ' HR \u00b7 ' + esc(lastName(mu.pitcher))
                 + ' ' + mu.hr9.toFixed(1)
@@ -3905,6 +4280,87 @@ function renderFeed(){
     + '</div>';
 }
 
+/* ---------------- keeping the record ----------------
+   Everything else in this app is a fetch away — standings, scores, weather, the
+   whole season. The scorecard is not. It is prospective by design, it starts
+   empty, and it fills at the rate baseball is played. It also lives in
+   localStorage, which a cleared cache, a new browser or a private window wipes
+   without warning and without a copy anywhere.
+
+   So: a file. Plain JSON, the same shape held in memory, readable in any text
+   editor and analysable outside the app. */
+function exportScorecard(){
+  const n = Object.keys(S.card).length;
+  if(!n){ S.ioMsg = "Nothing to export yet."; render(); return; }
+  const payload = { app:"108", kind:"scorecard", version:CARD_V,
+                    at:new Date().toISOString(), build:BUILD, card:S.card };
+  try{
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "108-scorecard-" + iso(new Date()) + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    S.ioMsg = "Exported " + n + (n === 1 ? " prediction." : " predictions.");
+  }catch(e){ S.ioMsg = "Could not export: " + e.message; }
+  render();
+}
+
+/* Merging rather than replacing, because the obvious use is carrying a record
+   between two browsers that each hold part of it.
+
+   Where both sides know a game, the settled copy wins, and if both are settled
+   the incoming one is ignored — a prediction is written once and an import is
+   no place to start revising them. */
+function importScorecard(text){
+  let payload;
+  try{ payload = JSON.parse(text); }
+  catch(e){ S.ioMsg = "That file is not readable JSON."; render(); return; }
+  const incoming = payload && payload.card && typeof payload.card === "object"
+    ? payload.card : null;
+  if(!incoming || payload.kind !== "scorecard"){
+    S.ioMsg = "That does not look like a 108 scorecard.";
+    render();
+    return;
+  }
+  let added = 0, filled = 0, known = 0, bad = 0;
+  for(const key in incoming){
+    const inc = incoming[key];
+    if(!inc || !inc.date || inc.pHome == null){ bad++; continue; }
+    const have = S.card[key];
+    if(!have){ S.card[key] = inc; added++; }
+    else if(have.hs == null && inc.hs != null){
+      have.hs = inc.hs; have.as = inc.as;
+      if(inc.watches) have.watches = inc.watches;
+      if(inc.ks) have.ks = inc.ks;
+      filled++;
+    }
+    else known++;
+  }
+  S.cardDirty = true;
+  saveScorecard();
+  S.ioMsg = added + " added, " + filled + " completed, " + known + " already known"
+    + (bad ? ", " + bad + " unreadable" : "") + ".";
+  render();
+}
+
+function scorecardIO(){
+  return '<div class="cdio">'
+    + '<button class="btn" id="exportCard">Export</button>'
+    + '<label class="btn" for="importFile">Import'
+      + '<input type="file" id="importFile" accept="application/json,.json"></label>'
+    + (S.ioMsg ? '<span class="ioMsg">' + esc(S.ioMsg) + '</span>' : "")
+    + '</div>'
+    + '<p class="note">The record is the one thing here that cannot be refetched \u2014 it '
+    + 'only exists because you were running the app before those games started. It lives '
+    + 'in this browser\u2019s storage, which clearing your history will erase. Export writes '
+    + 'it to a file; import merges one back, so a record kept on a phone and a laptop can '
+    + 'be joined rather than duplicated.</p>';
+}
+
 /* Yesterday and before: what was written down, against what happened. */
 function scorecardBlock(){
   const settled = Object.values(S.card)
@@ -3932,7 +4388,9 @@ function scorecardBlock(){
                   + ' still waiting on results \u2014 the season data loads a moment after '
                   + 'this tab opens, so give it a second and check again.'
                 : ""))
-      + '</p></div>';
+      + '</p></div>'
+      /* An empty record is exactly when someone would want to restore one. */
+      + scorecardIO();
   }
 
   const s = scorecardSummary();
@@ -3973,12 +4431,55 @@ function scorecardBlock(){
             + (s.kMAE != null ? ', strikeout projections by ' + s.kMAE.toFixed(1) : "")
             + '. '
           : "")
+      + (s.watchExpN
+          ? (() => {
+              const exp = s.watchExp, sd = s.watchSd, hit = s.watchHrP;
+              /* Counted over the picks that carry a rate, not all of them —
+                 comparing every homer against an expectation drawn from a
+                 subset would flatter or damn the picker at random. */
+              const all = s.watchExpN === s.watchN;
+              let line = (all
+                  ? 'Bats homered ' + hit + ' of ' + s.watchN
+                  : 'Of the ' + s.watchExpN + (s.watchExpN === 1 ? ' pick' : ' picks')
+                    + ' carrying a rate, ' + hit + ' homered')
+                + ' against ' + exp.toFixed(1) + ' expected';
+              if(sd && sd > 0){
+                const z = (hit - exp) / sd;
+                line += Math.abs(z) < 1.5
+                  ? ', which is an ordinary run'
+                  : Math.abs(z) < 2
+                    ? ', a ' + Math.abs(z).toFixed(1) + '-sigma stretch '
+                      + (z < 0 ? 'below' : 'above') + ' \u2014 unusual, not alarming'
+                    : ', ' + Math.abs(z).toFixed(1) + ' sigma '
+                      + (z < 0 ? 'below' : 'above')
+                      + ', further out than luck comfortably explains';
+              }
+              return line + '. ';
+            })()
+          : "")
+      + (s.watchDnp
+          ? s.watchDnp + (s.watchDnp === 1 ? ' bat sat' : ' bats sat')
+            + ' and drew a dash; lineups are not posted when the pick is made. '
+          : "")
       + (!s.n ? ""
-          : s.n < 20
-          ? 'Too few to mean much yet \u2014 a coin flip would look like this for weeks.'
-          : s.acc > 0.56 ? 'Better than backing the home side every time, so far.'
-            : s.acc < 0.50 ? 'Worse than a coin flip over this stretch.'
-              : 'About what backing the home side every time would give you.')
+          : (() => {
+              /* A reference edge rather than the observed one: at thirteen games
+                 the observed rate is mostly noise, and squaring it to get a
+                 sample size amplifies that into nonsense. 54% is roughly what a
+                 working baseball model achieves, so it is the honest yardstick
+                 for how long this will take to answer. */
+              const need = gamesNeeded(0.54);
+              const bar = detectableAt(s.n);
+              if(bar != null && bar < 1)
+                return 'At ' + s.n + (s.n === 1 ? ' game' : ' games') + ', only a hit rate '
+                  + 'above ' + Math.round(bar * 100) + '% would stand out from chance at all. '
+                  + 'Telling a real 54% model from a coin flip takes about '
+                  + need.toLocaleString() + ' settled games \u2014 six weeks or so of full '
+                  + 'slates. Until then this is a log, not a verdict.';
+              return 'Telling a real 54% model from a coin flip takes about '
+                + need.toLocaleString() + ' settled games. Until then this is a log, not '
+                + 'a verdict.';
+            })())
       + '</p>'
     + byDay.slice(0, 5).map(d => '<h3 class="cdday">' + esc(label(d.date)) + '</h3>'
         + d.items.map(e => {
@@ -4027,6 +4528,11 @@ function scorecardBlock(){
                  tacked onto the game above it. */
               + watchList(e).map(w => {
                   const tag = w.team ? ab(w.team) + ' bat' : "bat";
+                  /* Named before the lineup card existed, then rested. No
+                     chance to go deep, so no verdict either way. */
+                  if(w.dnp)
+                    return pick(["t", "\u2013"], lastName(w.name), tag, "did not play",
+                      w.p != null ? Math.round(w.p * 100) + '% chance' : "");
                   if(!w.result)
                     return pick(["t", "\u2013"], lastName(w.name), tag,
                                 "result not recorded", "");
@@ -4036,13 +4542,21 @@ function scorecardBlock(){
                     w.result.line || "did not play",
                     homered ? '<b>' + w.result.hr + ' HR</b>' : "no homer");
                 }).join("")
-              + (Array.isArray(e.ks) ? e.ks.filter(k => k.actual != null).map(k => {
+              + (Array.isArray(e.ks)
+                  ? e.ks.filter(k => k.actual != null || k.scratched).map(k => {
+                  const tag = k.own ? ab(k.own) + ' arm' : "arm";
+                  /* Named as the probable, never took the mound. Neither right
+                     nor wrong — the start it projected did not happen — so it
+                     draws the neutral mark and sits out the tally above. */
+                  if(k.scratched)
+                    return pick(["t", "\u2013"], lastName(k.name), tag, "did not pitch",
+                      'said <b>' + k.exp.toFixed(1) + '</b>');
                   const gap = k.actual - k.exp;
                   const close = Math.abs(gap) <= 2;
                   /* "0 strikeouts" was the longest string in the narrowest
                      column, and the one that got clipped. K says it. */
                   return pick(close ? ["y", "\u2713"] : ["n", "\u2717"],
-                    lastName(k.name), k.own ? ab(k.own) + ' arm' : "arm",
+                    lastName(k.name), tag,
                     k.actual + " K",
                     'said <b>' + k.exp.toFixed(1) + '</b> ('
                       + (gap > 0 ? "+" : "") + gap.toFixed(1) + ')');
@@ -4053,12 +4567,19 @@ function scorecardBlock(){
     + 'A tick on the side means it won. On a bat to watch it means he homered \u2014 '
     + 'the row named him as one to watch, so that is the outcome of the pick, not a '
     + 'footnote. On a strikeout projection it means within two of the real count. '
+    + 'A probable starter who was scratched draws a dash instead: MLB lists every '
+    + 'rostered player in a box score, so he would otherwise be read as having '
+    + 'thrown and struck nobody out, and marked wrong for a start he never made. '
+    + 'A bat that was rested draws a dash for the same reason as a scratched starter: the '
+    + 'lineup card is not published when the pick is made, so a day off is the manager\u2019s '
+    + 'decision rather than the model\u2019s error. '
     + 'Cards written before build 78 named a single bat across both clubs rather than one '
     + 'per club, so the bats-homered tally counts one pick a game over that stretch and '
     + 'two a game after it. The rate is comparable; the raw counts are not. '
     + 'The run projection shows what was said, what happened and the gap; it misses by '
     + 'three and a half runs on average, so read that gap as normal rather than as an '
-    + 'error.</p>';
+    + 'error.</p>'
+    + scorecardIO();
 }
 
 function renderPlays(){
@@ -4090,8 +4611,12 @@ function renderPlays(){
       + '\u2014 that word needs a book\'s number to mean anything and this app has no '
       + 'source for one, so compare the projection to a line yourself. Watch names one bat '
       + 'per club: the best home run rate in each lineup, weighed against the HR/9 of the '
-      + 'arm it faces. That is an observation about who is involved rather than a claim it '
-      + 'will happen. Lineups are '
+      + 'arm it faces, then adjusted for the air and the wind at that ballpark. The '
+      + 'percentage is his chance of going deep over a full game, not per plate '
+      + 'appearance \u2014 a bat at one homer per twenty is a one-in-five shot on the '
+      + 'night, not one in twenty. Conditions are common to both clubs, so they do not '
+      + 'change which bat is named, only how likely it is to pay off and therefore the '
+      + 'bar the record grades it against. Lineups are '
       + 'not published until a few hours before first pitch, so none of this knows who is '
       + 'actually playing.</p>'
     : "";
@@ -4238,13 +4763,20 @@ document.addEventListener("click", e => {
       S.cal = {
         with:backtest(RECENCY_W, false),
         without:backtest(0, false),
-        withSP:backtest(RECENCY_W, true)
+        withSP:backtest(RECENCY_W, true),
+        /* The same season scored both ways, changing nothing but where team
+           strength comes from. This is what decides whether USE_PYTH earns its
+           place, and it is the app's own answer rather than mine. */
+        rec:backtest(RECENCY_W, false, null, null, false),
+        pyth:backtest(RECENCY_W, false, null, null, true)
       };
       if(S.cal.with) S.sweep = sweep();
       /* Fit on the best model available — with starters if they were testable,
          since that is what the cards actually use. */
       const basis = (S.cal.withSP && S.cal.withSP.spN > 200) ? S.cal.withSP : S.cal.with;
       S.calFit = basis ? fitCalibration(basis.preds) : null;
+      /* And the same fit judged on games it never saw. */
+      S.calOut = basis ? holdoutCheck(basis.preds) : null;
       try{ localStorage.setItem(FIT_KEY, JSON.stringify(S.calFit)); }catch(err){}
       if(!S.cal.with) S.cal = null;
       S.calBusy = false; render();
@@ -4256,6 +4788,8 @@ document.addEventListener("click", e => {
 
   const fd = e.target.closest("[data-feed]");
   if(fd){ S.feedMine = fd.dataset.feed === "mine"; render(); return; }
+
+  if(e.target.closest("#exportCard")){ exportScorecard(); return; }
 
   if(e.target.closest("#markSeen")){ saveBaseline(); render(); return; }
 
@@ -4315,6 +4849,17 @@ document.addEventListener("click", e => {
   }
 });
 
+/* Delegated, because render() rebuilds the document and any listener bound
+   directly to the input would not survive it. */
+document.addEventListener("change", e => {
+  const inp = e.target.closest("#importFile");
+  if(!inp || !inp.files || !inp.files[0]) return;
+  const rd = new FileReader();
+  rd.onload = () => importScorecard(String(rd.result || ""));
+  rd.onerror = () => { S.ioMsg = "Could not read that file."; render(); };
+  rd.readAsText(inp.files[0]);
+});
+
 document.addEventListener("keydown", e => {
   if(e.key === "Escape" && S.sheet){ closeSheet(); return; }
 
@@ -4362,6 +4907,7 @@ document.addEventListener("visibilitychange", () => {
 S.follow = loadFollow();
 S.baseline = loadBaseline();
 S.card = loadScorecard();
+repairScorecard();
 try{
   const f = JSON.parse(localStorage.getItem(FIT_KEY) || "null");
   if(f && typeof f.a === "number" && typeof f.b === "number") S.calFit = f;
