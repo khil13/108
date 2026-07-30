@@ -233,6 +233,7 @@ ul{margin:0;padding:0;list-style:none;}
   margin-right:9px;}
 .bpline b{color:var(--slate);font-weight:500;font-size:11.5px;}
 .bpline b.up{color:var(--chalk);}
+.bpline.sb i{font-style:normal;color:#738E93;font-size:10px;}
 .pills{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 0 12px;}
 .pills:not(:last-child){margin-bottom:10px;}
 .pill{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;
@@ -549,7 +550,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "87 — the record shows what it stakes, not just what it calls";
+const BUILD = "89 — a card of the day, with the joint number on top";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -621,9 +622,9 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, teamBat:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, teamBat:{}, runners:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
-  odds:null, simBusy:false, calOut:null, ioMsg:null,
+  odds:null, simBusy:false, calOut:null, ioMsg:null, parlay:{}, parlayDirty:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
 };
 
@@ -1563,6 +1564,7 @@ async function settlePicksFromBox(){
        is absent from the game rather than unreachable. */
     e.boxTries = BOX_TRIES;
     const box = readBoxscore(j);
+    if(settleParlayFromBox(key, box)) changed = true;
     for(const w of watchList(e)){
       if(w.id == null || w.result || w.dnp) continue;
       /* This box score is the game's own, so a bat that is not in it, or is in
@@ -1903,7 +1905,7 @@ async function loadRosters(){
    then grouped by club. A 100 plate-appearance floor keeps a callup with two
    homers in nine games out of the leaders. */
 async function loadHitters(rosters){
-  const byTeam = {};
+  const byTeam = {}, runners = {};
   const yr = new Date().getFullYear();
   let j;
   try{
@@ -1918,26 +1920,46 @@ async function loadHitters(rosters){
     /* Team strikeout rate is accumulated across every player in the response,
        before the leaders are filtered out — a top-five-by-homers list would say
        nothing about how often the lineup as a whole strikes out. */
-    const tb = bat[tid] || (bat[tid] = { k:0, pa:0 });
+    const tb = bat[tid] || (bat[tid] = { k:0, pa:0, sb:0, cs:0 });
     tb.k += Number(st.strikeOuts) || 0;
     tb.pa += Number(st.plateAppearances) || 0;
+    tb.sb += Number(st.stolenBases) || 0;
+    tb.cs += Number(st.caughtStealing) || 0;
+
+    const pid = (s.player || {}).id;
+    /* Anyone whose stats sit under a club they have since left is dropped, for
+       runners as much as for sluggers. Only applied when the roster list loaded. */
+    const traded = rosters && Object.keys(rosters).length && pid
+      && rosters[pid] && rosters[pid] !== tid;
+
+    /* Base stealers are a different list from home run hitters and need their
+       own pass: the fastest man in a lineup is often near the bottom of it for
+       power, and the plate-appearance floor that keeps a callup out of the
+       slugging leaders would keep a September pinch-runner out of this one too.
+       Five attempts is the floor — below that a success rate is noise. */
+    const sb = Number(st.stolenBases) || 0, cs = Number(st.caughtStealing) || 0;
+    if(!traded && sb + cs >= 5){
+      (runners[tid] = runners[tid] || []).push({
+        id:pid, name:(s.player || {}).fullName || "\u2014",
+        sb, cs, att:sb + cs, rate:sb / (sb + cs) });
+    }
 
     const hr = st.homeRuns, pa = st.plateAppearances;
     if(!hr || hr <= 0 || !pa || pa < 100) continue;
-    /* Drop anyone whose stats sit under a club they have since left. Only
-       applied when the roster list actually loaded. */
-    const pid = (s.player || {}).id;
-    if(rosters && Object.keys(rosters).length && pid
-       && rosters[pid] && rosters[pid] !== tid) continue;
+    if(traded) continue;
     (byTeam[tid] = byTeam[tid] || []).push({
-      id:(s.player || {}).id,
+      id:pid,
       name:(s.player || {}).fullName || "—", hr, pa, perPA:pa / hr
     });
   }
   for(const k in byTeam) byTeam[k] = byTeam[k].sort((a, b) => b.hr - a.hr).slice(0, 5);
+  for(const k in runners) runners[k] = runners[k].sort((a, b) => b.sb - a.sb).slice(0, 3);
   const teamBat = {};
-  for(const k in bat) if(bat[k].pa > 500) teamBat[k] = { kRate:bat[k].k / bat[k].pa };
-  return { byTeam, teamBat };
+  for(const k in bat) if(bat[k].pa > 500)
+    teamBat[k] = { kRate:bat[k].k / bat[k].pa, sb:bat[k].sb, cs:bat[k].cs,
+                   sbRate:bat[k].sb + bat[k].cs > 0
+                     ? bat[k].sb / (bat[k].sb + bat[k].cs) : null };
+  return { byTeam, teamBat, runners };
 }
 
 /* Bullpen strength, built from player lines rather than a team total, because
@@ -2442,6 +2464,7 @@ async function loadDetail(){
     }
     const hit = await loadHitters(S.rosters);
     S.hitters = hit.byTeam; S.teamBat = hit.teamBat;
+    S.runners = hit.runners || {};
     render();
   }
   S.diag.hitters = Object.values(S.hitters).reduce((n,a) => n + a.length, 0);
@@ -2510,6 +2533,17 @@ function pitchedIn(b){
 /* One box score, reduced to what the app uses: each player's season line, what
    he did tonight, and a pitcher's count. Shared by the live poll and by the
    settlement pass that grades finished picks. */
+/* Steals are a team event as much as a personal one, and the boxscore already
+   totals them per side. Read separately from the per-player map because that map
+   is flat by design — it has no idea which club anyone plays for. */
+function readSteals(j){
+  const side = k => (((((j || {}).teams || {})[k] || {}).teamStats || {}).batting) || {};
+  const h = side("home"), a = side("away");
+  const n = v => Number(v) || 0;
+  return { h:n(h.stolenBases), a:n(a.stolenBases),
+           hcs:n(h.caughtStealing), acs:n(a.caughtStealing) };
+}
+
 function readBoxscore(j){
   const out = {};
   for(const sideKey of ["home", "away"]){
@@ -2532,6 +2566,7 @@ function readBoxscore(j){
            appearances are the measure rather than mere presence. */
         batPA:tb.plateAppearances != null ? tb.plateAppearances : null,
         batAB:tb.atBats != null ? tb.atBats : null,
+        batSb:tb.stolenBases != null ? tb.stolenBases : null,
         /* MLB has used both names for this field over the years. */
         pitches:tp.numberOfPitches != null ? tp.numberOfPitches
                : tp.pitchesThrown != null ? tp.pitchesThrown : null,
@@ -2570,6 +2605,7 @@ async function loadBoxscores(){
   const keep = new Set(S.games.map(g => String(g.pk)));
   for(const k in S.box) if(keep.has(k.slice(0, k.indexOf(":")))) out[k] = S.box[k];
   const lastPlays = Object.assign({}, S.lastPlay);
+  const sb = Object.assign({}, S.steals);
   const CHUNK = 4;
   for(let i = 0; i < live.length; i += CHUNK){
     await Promise.all(live.slice(i, i + CHUNK).map(async g => {
@@ -2597,10 +2633,12 @@ async function loadBoxscores(){
       try{ j = await getJSON(MLB + "/game/" + g.pk + "/boxscore"); }catch(e){ return; }
       const one = readBoxscore(j);
       for(const pid in one) out[boxKey(g.pk, pid)] = one[pid];
+      sb[g.pk] = readSteals(j);
     }));
   }
   S.box = out;
   S.lastPlay = lastPlays;
+  S.steals = sb;
   S.boxAt = Date.now();
   S.diag.box = Object.keys(out).length;
   render();
@@ -2901,6 +2939,64 @@ function powerBlock(g){
     + away + (away && home ? '<div class="clubgap"></div>' : "") + home + '</div>';
 }
 
+/* What has happened on the bases tonight. Shown only once something has, so a
+   game with no running game does not carry an empty row saying nothing. Caught
+   stealing is included because a club 0-for-2 has been running too, and that is
+   as much a fact about the game as two clean steals. */
+function stealLine(g){
+  if(g.st !== "live" && g.st !== "final") return "";
+  const s = S.steals[g.pk];
+  if(!s) return "";
+  const total = s.h + s.a + s.hcs + s.acs;
+  if(!total) return "";
+  /* Attempts rather than a bare count, so a club running twice and failing twice
+     does not read as a club that never left first. */
+  const side = (id, sb, cs) => ab(id) + ' <b>' + sb + '</b>'
+    + (cs ? '<i> of ' + (sb + cs) + '</i>' : "");
+  return '<div class="bpline sb"><em>steals</em>'
+    + side(g.aid, s.a, s.acs) + ' \u00b7 ' + side(g.hid, s.h, s.hcs) + '</div>';
+}
+
+/* Who runs, before the game gives you anything to look at. The counterpart to
+   Power on show, and read the same way: what has already happened, at a rate,
+   not a forecast. A club's own total sits alongside so three names can be placed
+   against how much running the lineup does as a whole. */
+function basepathBlock(g){
+  if(g.st !== "sched") return "";
+  const side = teamId => {
+    const rs = S.runners[teamId] || [];
+    const tb = S.teamBat[teamId];
+    /* A club that never runs still gets its header. Dropping it left the block
+       showing one side of a two-sided matchup with no hint why. */
+    if(!rs.length && !tb) return "";
+    return '<div class="clubhead">'
+      + '<span class="tbar" style="background:' + col(teamId) + '" aria-hidden="true"></span>'
+      + '<span class="clubab">' + ab(teamId) + '</span>'
+      + '<span class="facing">' + (tb && tb.sb != null
+          ? '<b>' + tb.sb + '</b> SB as a club'
+            + (tb.sbRate != null ? ' \u00b7 ' + Math.round(tb.sbRate * 100) + '%' : "")
+          : "") + '</span></div>'
+      + (rs.length
+          ? '<div class="batrow bathead"><span></span><span></span>'
+              + '<span>sb</span><span>att</span><span>rate</span></div>'
+            + rs.map(r => '<div class="batrow">'
+                + '<span class="bdash" aria-hidden="true"></span>'
+                + '<span class="bname">' + esc(lastName(r.name)) + '</span>'
+                + '<span class="bhr">' + r.sb + '</span>'
+                + '<span class="brate">' + r.att + '</span>'
+                + '<span class="bl5"><b' + (r.rate >= 0.8 ? ' class="hot"' : '') + '>'
+                  + Math.round(r.rate * 100) + '%</b></span></div>').join("")
+          : '<div class="batrow"><span class="bdash" aria-hidden="true"></span>'
+            + '<span class="bname">no regular base stealer</span>'
+            + '<span class="bhr"></span><span class="brate"></span>'
+            + '<span class="bl5"></span></div>');
+  };
+  const away = side(g.aid), home = side(g.hid);
+  if(!away && !home) return "";
+  return '<div class="pblock"><h5 class="plabel">On the basepaths</h5>'
+    + away + (away && home ? '<div class="clubgap"></div>' : "") + home + '</div>';
+}
+
 /* ============================== rendering =========================== */
 
 const SEAM = '<svg class="seamrule" viewBox="0 0 320 14" preserveAspectRatio="none" aria-hidden="true">'
@@ -3169,12 +3265,12 @@ function detail(g){
   const open = !!S.open[g.pk];
   const label = open
     ? '<span>Less</span><i class="chev" aria-hidden="true">\u25B4</i>'
-    : '<span>Starters · power · model line</span><i class="chev" aria-hidden="true">\u25BE</i>';
+    : '<span>Starters · power · bases · model line</span><i class="chev" aria-hidden="true">\u25BE</i>';
   const toggle = '<button class="disc" data-toggle="' + g.pk + '" aria-expanded="' + open + '">'
     + label + '</button>';
   if(!open) return toggle;
 
-  const inner = starters(g) + powerBlock(g) + projectionBlock(g);
+  const inner = starters(g) + powerBlock(g) + basepathBlock(g) + projectionBlock(g);
   if(inner) return inner + toggle;
   // Expanded but the deferred fetch has not landed yet.
   return '<div class="pblock waiting">'
@@ -3279,6 +3375,7 @@ function gameCard(g){
           + '</div></div>'
         : "")
     + lastPlayLine(g)
+    + stealLine(g)
     + onMound(g)
     + (g.st === "sched" ? detail(g) : "")
     + '<footer class="gfoot"><span>' + esc(g.venue || city(g.hid)) + '</span>'
@@ -4429,6 +4526,355 @@ function scorecardIO(){
     + 'be joined rather than duplicated.</p>';
 }
 
+/* ---------------- the card of the day ----------------
+   Eight legs, one per game, assembled from the same numbers the rest of the app
+   already stakes its record on — and printed beside the probability that all
+   eight land, which is the number that matters and the one a betting slip never
+   shows you.
+
+   That number is a product, so it punishes optimism geometrically. Eight legs at
+   a genuine 60% is 1.7%. At 55% it is 0.8%. This is not a flaw in the display; it
+   is what a parlay is, and the app's own record says its legs are not at 55%.
+
+   Two deliberate constraints. One leg per game, because a homer pick and a run
+   total in the same ballpark are the same weather and the same starter and fail
+   together — multiplying correlated legs would overstate the joint chance, which
+   is exactly the error that makes these look attractive. And the probability
+   stored with each leg is the one the app showed, so the record grades what was
+   claimed rather than a number reconstructed later.
+
+   What is not here: hits and spread. Nothing in the app tracks hit rates or
+   margins, and a run projection is not a spread. Inventing either would be worse
+   than their absence. */
+const PARLAY_KEY = "108.parlay";
+const PARLAY_LEGS = 8;
+const MAX_PER_KIND = 2;
+
+function loadParlay(){
+  try{
+    const raw = localStorage.getItem(PARLAY_KEY);
+    const c = raw ? JSON.parse(raw) : null;
+    return c && typeof c === "object" ? c : {};
+  }catch(e){ return {}; }
+}
+function saveParlay(){
+  const cutoff = iso(shift(-CARD_DAYS));
+  for(const d in S.parlay) if(d < cutoff) delete S.parlay[d];
+  try{ localStorage.setItem(PARLAY_KEY, JSON.stringify(S.parlay)); }catch(e){}
+}
+
+/* P(X >= k) for a Poisson mean. Runs and strikeouts are counts of largely
+   independent events, so a Poisson is the honest default shape — it will
+   understate the fat tail of a blowout, and that is worth knowing rather than
+   papering over. */
+function poissonAtLeast(k, mean){
+  if(!(mean > 0)) return k <= 0 ? 1 : 0;
+  if(k <= 0) return 1;
+  let term = Math.exp(-mean), cum = term;
+  for(let i = 1; i < k; i++){ term *= mean / i; cum += term; }
+  return Math.max(0, Math.min(1, 1 - cum));
+}
+
+/* Normal CDF, by the usual rational approximation of erf. Needed because the run
+   projection's spread is measured rather than assumed — see below. */
+function normCdf(z){
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989423 * Math.exp(-z * z / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478
+            + t * (-1.821256 + t * 1.330274))));
+  return z > 0 ? 1 - p : p;
+}
+
+/* The app's own measured error on a game total, in runs, preferring the season
+   replay over the live record because it has a thousand games rather than twenty.
+   Null when neither has run. */
+function runSpread(){
+  if(S.cal && S.cal.with && S.cal.with.runMAE) return S.cal.with.runMAE * 1.2533;
+  const s = scorecardSummary();
+  if(s && s.runMAE && s.totN >= 20) return s.runMAE * 1.2533;
+  return null;
+}
+
+/* Every leg this app can honestly offer on one game. */
+function legsFor(g){
+  const out = [];
+  const add = leg => { if(leg && leg.p > 0 && leg.p < 1) out.push(leg); };
+
+  const pr = project(g);
+  if(pr){
+    const pHome = calibrate(pr.pHome);
+    const homeFav = pHome >= 0.5;
+    const team = homeFav ? g.hid : g.aid;
+    add({ pk:g.pk, kind:"ml", team, p:Math.max(pHome, 1 - pHome),
+          label:ab(team) + " to win", detail:"moneyline" });
+  }
+
+  const tot = projectTotal(g), lgTot = leagueRunsPerGame();
+  if(tot && lgTot){
+    /* The line is the league's own average total, rounded to a half so it cannot
+       push. No book's number is involved, and none is available. */
+    const line = Math.round(lgTot * 2) + 0.5;
+    const over = tot.total > line;
+    /* A Poisson around the projection would put the spread at about 2.9 runs and
+       so hand this leg an 80% confidence. The app has measured its own error on a
+       game total at appreciably more than that, and using the measured figure
+       roughly halves the confidence. Claiming Poisson precision for a projection
+       known to miss by four runs would be the least honest number in the app. */
+    const sd = runSpread();
+    const pOver = sd
+      ? 1 - normCdf((line - tot.total) / sd)
+      : poissonAtLeast(Math.ceil(line), tot.total);
+    add({ pk:g.pk, kind:"runs", line, over, p:over ? pOver : 1 - pOver,
+          label:(over ? "Over " : "Under ") + line.toFixed(1) + " runs",
+          detail:"projected " + tot.total.toFixed(1)
+            + (sd ? " \u00b1 " + sd.toFixed(1) + " measured" : "") });
+  }
+
+  for(const mu of bestBats(g)){
+    if(mu.tonight == null || mu.batterId == null) continue;
+    add({ pk:g.pk, kind:"hr", pid:mu.batterId, team:mu.team, p:mu.tonight,
+          label:lastName(mu.batter) + " home run",
+          detail:ab(mu.team) + " \u00b7 1 per " + Math.round(1 / mu.blended) + " PA" });
+  }
+
+  for(const [pid, oppId, ownId] of [[g.aProbId, g.hid, g.aid], [g.hProbId, g.aid, g.hid]]){
+    const k = projectStrikeouts(pid, oppId);
+    if(!k) continue;
+    /* The line sits at the projection, not below it. Setting it a couple under
+       produced legs at 85% and an eight-leg card at one in five, which is not a
+       parlay so much as a rounding error dressed as one. At the projection the
+       leg is a coin flip on the app's own number, which is what it should be. */
+    const need = Math.max(3, Math.round(k.exp));
+    add({ pk:g.pk, kind:"k", pid, team:ownId, need,
+          p:poissonAtLeast(need, k.exp),
+          label:lastName((S.pitchers[pid] || {}).name) + " " + need + "+ strikeouts",
+          detail:ab(ownId) + " \u00b7 projected " + k.exp.toFixed(1) });
+  }
+
+  for(const tid of [g.aid, g.hid]){
+    const r = (S.runners[tid] || [])[0];
+    const games = (S.runs[tid] || {}).g;
+    if(!r || !games) continue;
+    /* Steals per team game, not per game he started, because the app does not
+       know how often he plays. That understates his rate on a night he is in the
+       lineup and overstates the chance he is in it at all. The two pull opposite
+       ways and neither is measured, which is the weakest leg here. */
+    add({ pk:g.pk, kind:"sb", pid:r.id, team:tid,
+          p:1 - Math.exp(-r.sb / games),
+          label:lastName(r.name) + " to steal",
+          detail:ab(tid) + " \u00b7 " + r.sb + " in " + games + " games" });
+  }
+  return out;
+}
+
+/* Build once, for a date, and never revise — the same discipline as the
+   scorecard. Highest-probability leg from each game, one apiece, until eight. */
+function buildParlay(date){
+  if(S.parlay[date]) return S.parlay[date];
+  const games = S.games.filter(g => g.date === date && g.st === "sched");
+  if(games.length < 3) return null;
+  const all = [];
+  for(const g of games) for(const leg of legsFor(g)) all.push(leg);
+  if(!all.length) return null;
+  all.sort((a, b) => b.p - a.p);
+
+  /* One leg per game, and built in three passes so the card is actually varied.
+     Ranking on probability alone collapsed it into seven strikeout legs, because
+     that kind is systematically the most confident; capping each kind at two then
+     dropped home runs entirely, because they are systematically the least. So:
+     one of every kind available first, then fill to the cap, then fill regardless.
+     A card of one bet repeated eight times tests nothing. */
+  const legs = [], used = {}, byKind = {};
+  const take = limit => {
+    for(const leg of all){
+      if(legs.length >= PARLAY_LEGS) return;
+      if(used[leg.pk]) continue;
+      if(limit != null && (byKind[leg.kind] || 0) >= limit) continue;
+      used[leg.pk] = true;
+      byKind[leg.kind] = (byKind[leg.kind] || 0) + 1;
+      legs.push(leg);
+    }
+  };
+  take(1);                 // one of each kind the slate offers
+  take(MAX_PER_KIND);      // then a second of the strongest kinds
+  take(null);              // then whatever is left, if the slate is thin
+  /* Short slate: rather than pad with a second leg from a game already in the
+     card, the card is simply shorter. A correlated leg would flatter the joint
+     number, which is the one thing this must not do. */
+  if(legs.length < 3) return null;
+  const joint = legs.reduce((n, l) => n * l.p, 1);
+  const rec = { date, at:new Date().toISOString(), legs, joint, built:legs.length };
+  S.parlay[date] = rec;
+  S.parlayDirty = true;
+  return rec;
+}
+
+/* Grade what can be graded from a final score. Player legs wait for a box
+   score, which settlePicksFromBox fetches. */
+function settleParlay(){
+  const byPk = {};
+  if(Array.isArray(S.finals))
+    for(const f of S.finals) if(f && f.pk != null && f.hs != null) byPk[String(f.pk)] = f;
+  for(const g of S.games)
+    if(g.st === "final" && g.hs != null) byPk[String(g.pk)] = { hs:g.hs, as:g.as, hid:g.hid, aid:g.aid };
+
+  let changed = false;
+  for(const d in S.parlay){
+    for(const leg of S.parlay[d].legs || []){
+      if(leg.hit != null || leg.void) continue;
+      const f = byPk[String(leg.pk)];
+      if(!f) continue;
+      if(leg.kind === "ml"){
+        if(f.hs === f.as){ leg.void = true; }
+        else leg.hit = (f.hs > f.as ? f.hid : f.aid) === leg.team;
+        leg.actual = f.as + "\u2013" + f.hs;
+        changed = true;
+      } else if(leg.kind === "runs"){
+        const total = f.hs + f.as;
+        leg.hit = leg.over ? total > leg.line : total < leg.line;
+        leg.actual = String(total);
+        changed = true;
+      }
+    }
+  }
+  if(changed){ S.parlayDirty = true; saveParlay(); }
+}
+
+/* The player legs, from a box score belonging to that game. */
+function settleParlayFromBox(pk, box){
+  let changed = false;
+  for(const d in S.parlay){
+    for(const leg of S.parlay[d].legs || []){
+      if(String(leg.pk) !== String(pk) || leg.hit != null || leg.void) continue;
+      const b = box[leg.pid];
+      if(leg.kind === "hr" || leg.kind === "sb"){
+        if(!battedIn(b)){ leg.void = true; leg.actual = "did not play"; changed = true; continue; }
+        if(leg.kind === "hr"){
+          const hr = b.todayHr != null ? b.todayHr : 0;
+          leg.hit = hr > 0; leg.actual = hr + " HR";
+        } else {
+          const sb = b.batSb != null ? b.batSb : 0;
+          leg.hit = sb > 0; leg.actual = sb + " SB";
+        }
+        changed = true;
+      } else if(leg.kind === "k"){
+        if(!pitchedIn(b)){ leg.void = true; leg.actual = "did not pitch"; changed = true; continue; }
+        const k = b.pK != null ? b.pK : 0;
+        leg.hit = k >= leg.need; leg.actual = k + " K";
+        changed = true;
+      }
+    }
+  }
+  if(changed){ S.parlayDirty = true; saveParlay(); }
+  return changed;
+}
+
+/* How a settled card finished. */
+function parlaySummary(rec){
+  const legs = rec.legs || [];
+  const live = legs.filter(l => !l.void);
+  const done = live.filter(l => l.hit != null);
+  const hit = done.filter(l => l.hit).length;
+  return { n:live.length, done:done.length, hit,
+           voided:legs.length - live.length,
+           settled:done.length === live.length && live.length > 0,
+           landed:done.length === live.length && hit === live.length && live.length > 0,
+           joint:live.reduce((n, l) => n * l.p, 1) };
+}
+
+/* The card, with the number that decides it at the top rather than the bottom. */
+function parlayBlock(){
+  const today = iso(new Date());
+  const rec = S.parlay[today];
+  const past = Object.values(S.parlay)
+    .filter(r => r.date !== today && (r.legs || []).some(l => l.hit != null))
+    .sort((a, b) => a.date < b.date ? 1 : -1)
+    .slice(0, 5);
+
+  const odds = p => p <= 0 ? "\u2014"
+    : p >= 1 ? "1 in 1"
+    : "1 in " + (1 / p >= 1000 ? Math.round(1 / p / 100) * 100 : Math.round(1 / p)).toLocaleString();
+
+  const legRow = leg => {
+    const mark = leg.void ? ["t", "\u2013"]
+      : leg.hit == null ? ["t", "\u00b7"]
+      : leg.hit ? ["y", "\u2713"] : ["n", "\u2717"];
+    return '<div class="cdpick">'
+      + '<span class="cdmark ' + mark[0] + '">' + mark[1] + '</span>'
+      + '<span class="cdwho">' + esc(leg.label)
+        + '<em>' + esc(leg.detail) + (leg.actual ? " \u00b7 " + esc(leg.actual) : "")
+        + '</em></span>'
+      + '<span class="cdout"><b>' + Math.round(leg.p * 100) + '%</b></span>'
+      + '</div>';
+  };
+
+  let out = SEAM + '<h2 class="eyebrow">Card of the day</h2>';
+
+  if(!rec){
+    out += '<div class="empty"><h3>No card today</h3>'
+      + '<p>A card is built once MLB has posted enough of today\u2019s probable starters, '
+      + 'and needs at least three games to draw from. Games already under way are not '
+      + 'eligible \u2014 nothing here is picked after first pitch.</p></div>';
+  } else {
+    const s = parlaySummary(rec);
+    out += '<div class="cdblk">'
+      + '<div class="cdline">'
+        + '<span class="cdmark ' + (s.settled ? (s.landed ? "y" : "n") : "t") + '">'
+          + (s.settled ? (s.landed ? "\u2713" : "\u2717") : "\u00b7") + '</span>'
+        + '<span class="cdteams"><b>' + s.n + ' legs</b>, all landing</span>'
+        + '<span class="cdscore"><b>' + (s.joint * 100).toFixed(1) + '%</b></span>'
+      + '</div>'
+      + '<div class="cdmeta"><span>' + odds(s.joint) + '</span>'
+        + '<span>' + s.hit + ' of ' + s.done + ' settled</span>'
+        + (s.voided ? '<span>' + s.voided + ' void</span>' : "")
+      + '</div>'
+      + rec.legs.map(legRow).join("")
+      + '</div>'
+      + '<p class="note">Every leg is the app\u2019s own number, recorded before first '
+      + 'pitch and graded below. The figure at the top is their product: the chance all '
+      + (s.n === 1 ? "of it lands" : "of them land") + ' together, which is the only '
+      + 'number a parlay actually turns on. One leg per game, so the multiplication is '
+      + 'not inflated by two legs that would fail for the same reason.</p>'
+      + '<p class="note"><b>Read that top figure before anything else.</b> The record on '
+      + 'this tab says the side model is behind backing the home team, the run projection '
+      + 'is behind guessing the league average, and bats have homered below their own '
+      + 'expectation. Legs built from those do not become reliable by being multiplied '
+      + 'together \u2014 the product falls faster than any of them improves. There is also '
+      + 'no price here: without a book\u2019s number this cannot tell you a leg is '
+      + 'mispriced, only how likely the app thinks it is. Steal legs are the weakest, '
+      + 'because how often a runner actually starts is not in the data.</p>';
+  }
+
+  if(past.length){
+    out += '<h3 class="cdday">Earlier cards</h3>';
+    for(const r of past){
+      const s = parlaySummary(r);
+      out += '<div class="cdblk">'
+        + '<div class="cdline">'
+          + '<span class="cdmark ' + (s.landed ? "y" : "n") + '">'
+            + (s.landed ? "\u2713" : "\u2717") + '</span>'
+          + '<span class="cdteams">' + esc(r.date) + '</span>'
+          + '<span class="cdscore"><b>' + s.hit + '</b>\u2013' + (s.done - s.hit) + '</span>'
+        + '</div>'
+        + '<div class="cdmeta"><span>said ' + (s.joint * 100).toFixed(1) + '%</span>'
+          + '<span>' + (s.landed ? "landed" : "did not land") + '</span></div>'
+        + '</div>';
+    }
+    const all = past.map(parlaySummary);
+    const landed = all.filter(a => a.landed).length;
+    const expected = all.reduce((n, a) => n + a.joint, 0);
+    out += '<p class="note">' + landed + ' of ' + all.length
+      + (all.length === 1 ? ' card' : ' cards') + ' landed, against '
+      + expected.toFixed(2) + ' expected from the app\u2019s own numbers. '
+      + (landed > expected + 1
+          ? 'Ahead of expectation, over a sample far too small to mean anything.'
+          : 'A card of eight legs is supposed to fail almost always; that it does is not '
+            + 'evidence the legs are wrong, and it landing once would not be evidence '
+            + 'they are right.') + '</p>';
+  }
+  return out;
+}
+
 /* Yesterday and before: what was written down, against what happened. */
 function scorecardBlock(){
   const settled = Object.values(S.card)
@@ -4674,7 +5120,10 @@ function renderPlays(){
     .sort((a,b) => new Date(a.start) - new Date(b.start));
   /* Written down before first pitch, then settled once results arrive. */
   upcoming.forEach(recordPrediction);
+  buildParlay(today);
   settleScorecard();
+  settleParlay();
+  if(S.parlayDirty){ saveParlay(); S.parlayDirty = false; }
   if(S.cardDirty){ saveScorecard(); S.cardDirty = false; }
   settlePicksFromBox();
   const waiting = S.detailState === "loading" || !Object.keys(S.pitchers).length;
@@ -4711,9 +5160,9 @@ function renderPlays(){
     return '<div class="pane"><div class="empty"><h3>Nothing on today\'s card</h3>'
       + '<p>Projections appear once MLB posts the probable starters, usually the evening '
       + 'before. Games already under way move to the Today tab.</p></div>'
-      + scorecardBlock() + '</div>';
+      + parlayBlock() + scorecardBlock() + '</div>';
 
-  return '<div class="pane">' + card + scorecardBlock() + '</div>';
+  return '<div class="pane">' + card + parlayBlock() + scorecardBlock() + '</div>';
 }
 
 function render(resetScroll){
@@ -4994,6 +5443,7 @@ S.follow = loadFollow();
 S.baseline = loadBaseline();
 S.card = loadScorecard();
 repairScorecard();
+S.parlay = loadParlay();
 try{
   const f = JSON.parse(localStorage.getItem(FIT_KEY) || "null");
   if(f && typeof f.a === "number" && typeof f.b === "number") S.calFit = f;
