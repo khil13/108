@@ -550,7 +550,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "93 — three bugs: a fetch failure, a lineup gap, an empty product";
+const BUILD = "94 — every leg says which game it is";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -4902,7 +4902,16 @@ function runSpread(){
 /* Every leg this app can honestly offer on one game. */
 function legsFor(g){
   const out = [];
-  const add = leg => { if(leg && leg.p > 0 && leg.p < 1) out.push(leg); };
+  /* Every leg carries its own fixture. The run legs named no club at all — "Under
+     9.5 runs, projected 7.5" with nothing to say which game it was — and the rest
+     named only one side, so the opponent was missing everywhere. Stored on the leg
+     rather than looked up later, because the schedule window is four days and a
+     card outlives it. */
+  const add = leg => {
+    if(!leg || !(leg.p > 0) || !(leg.p < 1)) return;
+    leg.hid = g.hid; leg.aid = g.aid;
+    out.push(leg);
+  };
 
   const pr = project(g);
   if(pr){
@@ -4938,7 +4947,7 @@ function legsFor(g){
     if(mu.tonight == null || mu.batterId == null) continue;
     add({ pk:g.pk, kind:"hr", pid:mu.batterId, team:mu.team, p:mu.tonight,
           label:lastName(mu.batter) + " home run",
-          detail:ab(mu.team) + " \u00b7 1 per " + Math.round(1 / mu.blended) + " PA" });
+          detail:"1 per " + Math.round(1 / mu.blended) + " PA" });
   }
 
   for(const [pid, oppId, ownId] of [[g.aProbId, g.hid, g.aid], [g.hProbId, g.aid, g.hid]]){
@@ -4952,7 +4961,7 @@ function legsFor(g){
     add({ pk:g.pk, kind:"k", pid, team:ownId, need,
           p:poissonAtLeast(need, k.exp),
           label:lastName((S.pitchers[pid] || {}).name) + " " + need + "+ strikeouts",
-          detail:ab(ownId) + " \u00b7 projected " + k.exp.toFixed(1) });
+          detail:"projected " + k.exp.toFixed(1) });
   }
 
   for(const tid of [g.aid, g.hid]){
@@ -4969,7 +4978,7 @@ function legsFor(g){
     add({ pk:g.pk, kind:"sb", pid:r.id, team:tid,
           p:1 - Math.exp(-r.sb / games),
           label:lastName(r.name) + " to steal",
-          detail:ab(tid) + " \u00b7 " + r.sb + " in " + games + " games"
+          detail:r.sb + " in " + games + " games"
             + (lu ? " \u00b7 starting" : " \u00b7 lineup TBA") });
   }
   return out;
@@ -5107,11 +5116,19 @@ function parlayBlock(){
     const mark = leg.void ? ["t", "\u2013"]
       : leg.hit == null ? ["t", "\u00b7"]
       : leg.hit ? ["y", "\u2713"] : ["n", "\u2717"];
+    /* The club the leg is on is bolded inside its own fixture, so one short
+       string says both which game it is and which side of it, without repeating
+       an abbreviation twice. A run leg belongs to neither side and gets a plain
+       fixture. Cards written before build 94 stored no fixture and show none. */
+    const side = id => leg.team === id ? '<b>' + ab(id) + '</b>' : ab(id);
+    const fixture = leg.aid && leg.hid
+      ? side(leg.aid) + ' at ' + side(leg.hid) : "";
+    const bits = [fixture, esc(leg.detail),
+                  leg.actual ? esc(leg.actual) : ""].filter(Boolean);
     return '<div class="cdpick">'
       + '<span class="cdmark ' + mark[0] + '">' + mark[1] + '</span>'
       + '<span class="cdwho">' + esc(leg.label)
-        + '<em>' + esc(leg.detail) + (leg.actual ? " \u00b7 " + esc(leg.actual) : "")
-        + '</em></span>'
+        + '<em>' + bits.join(" \u00b7 ") + '</em></span>'
       + '<span class="cdout"><b>' + Math.round(leg.p * 100) + '%</b></span>'
       + '</div>';
   };
