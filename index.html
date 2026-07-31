@@ -405,6 +405,8 @@ ul{margin:0;padding:0;list-style:none;}
 .cdline{display:grid;grid-template-columns:16px 1fr auto;gap:9px;align-items:baseline;}
 .cdmark{font-family:var(--display);font-size:12px;text-align:center;line-height:1;}
 .cdmark.y{color:var(--grass);} .cdmark.n{color:var(--blush);} .cdmark.t{color:#738E93;}
+/* decided, but the game is still being played */
+.cdmark.prov{opacity:.55;}
 .cdteams{font-size:14px;color:var(--slate);overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;}
 .cdteams b{color:var(--chalk);font-weight:500;}
@@ -550,7 +552,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "95 — the calibration now tests the model the cards run";
+const BUILD = "96 — a card knows what it still needs";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -5058,8 +5060,54 @@ function settleParlay(){
       } else if(leg.kind === "runs"){
         const total = f.hs + f.as;
         leg.hit = leg.over ? total > leg.line : total < leg.line;
-        leg.actual = String(total);
+        leg.actual = total + " runs";
         changed = true;
+      }
+    }
+  }
+  if(changed){ S.parlayDirty = true; saveParlay(); }
+}
+
+/* Some legs are decided long before the last out, and the app already knows it.
+
+   Strikeouts, homers and steals are counting stats: they only go up, so once the
+   line is cleared nothing can take it back. An over is the same once the total
+   passes. An under is the mirror image — it can be killed early but never
+   confirmed, because runs can always still come. A moneyline is never safe at
+   any point before the final, so it is left alone.
+
+   Deliberately provisional. A game abandoned before it is official has its
+   statistics wiped, so this marks the leg rather than grading it: settleParlay
+   and settleParlayFromBox still write the real result when the game ends, and
+   they take precedence over anything decided here. */
+function settleParlayLive(){
+  const live = {};
+  for(const g of S.games) if(g.st === "live") live[String(g.pk)] = g;
+  if(!Object.keys(live).length) return;
+  let changed = false;
+  for(const d in S.parlay){
+    for(const leg of S.parlay[d].legs || []){
+      if(leg.hit != null || leg.void || leg.clear || leg.dead) continue;
+      const g = live[String(leg.pk)];
+      if(!g) continue;
+      if(leg.kind === "ml") continue;                 // a lead is not a result
+      if(leg.kind === "runs"){
+        const total = (g.hs || 0) + (g.as || 0);
+        if(total > leg.line){
+          if(leg.over) leg.clear = true; else leg.dead = true;
+          leg.actual = total + " runs";
+          changed = true;
+        }
+        continue;
+      }
+      const b = S.box[boxKey(leg.pk, leg.pid)];
+      if(!b) continue;
+      if(leg.kind === "k" && pitchedIn(b) && b.pK != null && b.pK >= leg.need){
+        leg.clear = true; leg.actual = b.pK + " K"; changed = true;
+      } else if(leg.kind === "hr" && b.todayHr > 0){
+        leg.clear = true; leg.actual = b.todayHr + " HR"; changed = true;
+      } else if(leg.kind === "sb" && b.batSb > 0){
+        leg.clear = true; leg.actual = b.batSb + " SB"; changed = true;
       }
     }
   }
@@ -5095,14 +5143,32 @@ function settleParlayFromBox(pk, box){
   return changed;
 }
 
-/* How a settled card finished. */
+/* Where a card stands, which is not the same question as how it finished.
+
+   Once legs start settling the pre-game product stops being the number that
+   matters. What matters is the chance of the legs still outstanding — and a card
+   sitting at 2% with seven of eight already in is telling you the wrong thing at
+   the moment you most want the right one. */
 function parlaySummary(rec){
   const legs = rec.legs || [];
   const live = legs.filter(l => !l.void);
   const done = live.filter(l => l.hit != null);
   const hit = done.filter(l => l.hit).length;
-  return { n:live.length, done:done.length, hit,
+
+  /* A leg decided while the game is still on counts toward where the card
+     stands, without being treated as finally graded. */
+  let failed = 0, remaining = 0, remainingP = 1, early = 0;
+  for(const l of live){
+    const verdict = l.hit != null ? l.hit : l.clear ? true : l.dead ? false : null;
+    if(l.hit == null && (l.clear || l.dead)) early++;
+    if(verdict === null){ remaining++; remainingP *= l.p; }
+    else if(!verdict) failed++;
+  }
+  const dead = failed > 0;
+  return { n:live.length, done:done.length, hit, early, failed, dead, remaining,
            voided:legs.length - live.length,
+           /* Zero once anything has failed; one when nothing is left to come. */
+           conditional:dead ? 0 : remainingP,
            settled:done.length === live.length && live.length > 0,
            landed:done.length === live.length && hit === live.length && live.length > 0,
            joint:live.reduce((n, l) => n * l.p, 1) };
@@ -5122,9 +5188,13 @@ function parlayBlock(){
     : "1 in " + (1 / p >= 1000 ? Math.round(1 / p / 100) * 100 : Math.round(1 / p)).toLocaleString();
 
   const legRow = leg => {
+    /* A leg decided with the game still on gets the same glyph at reduced
+       weight: settled and merely certain are not quite the same thing. */
     const mark = leg.void ? ["t", "\u2013"]
-      : leg.hit == null ? ["t", "\u00b7"]
-      : leg.hit ? ["y", "\u2713"] : ["n", "\u2717"];
+      : leg.hit != null ? (leg.hit ? ["y", "\u2713"] : ["n", "\u2717"])
+      : leg.clear ? ["y prov", "\u2713"]
+      : leg.dead ? ["n prov", "\u2717"]
+      : ["t", "\u00b7"];
     /* The club the leg is on is bolded inside its own fixture, so one short
        string says both which game it is and which side of it, without repeating
        an abbreviation twice. A run leg belongs to neither side and gets a plain
@@ -5133,7 +5203,9 @@ function parlayBlock(){
     const fixture = leg.aid && leg.hid
       ? side(leg.aid) + ' at ' + side(leg.hid) : "";
     const bits = [fixture, esc(leg.detail),
-                  leg.actual ? esc(leg.actual) : ""].filter(Boolean);
+                  leg.actual ? esc(leg.actual) : "",
+                  leg.hit == null && leg.clear ? "already clear" : "",
+                  leg.hit == null && leg.dead ? "already gone" : ""].filter(Boolean);
     return '<div class="cdpick">'
       + '<span class="cdmark ' + mark[0] + '">' + mark[1] + '</span>'
       + '<span class="cdwho">' + esc(leg.label)
@@ -5158,16 +5230,22 @@ function parlayBlock(){
         /* With every leg voided the product of an empty list is 1, which printed
            as "0 legs, all landing 100.0%" and "1 in 1". The one figure on this
            block the notes tell you to read first cannot be allowed to say that. */
-        + '<span class="cdteams">' + (s.n
-            ? '<b>' + s.n + ' legs</b>, all landing'
-            : '<b>Nothing left to settle</b>') + '</span>'
-        + '<span class="cdscore">' + (s.n
-            ? '<b>' + (s.joint * 100).toFixed(1) + '%</b>' : '\u2014') + '</span>'
+        + '<span class="cdteams">' + (!s.n ? '<b>Nothing left to settle</b>'
+            : s.dead ? '<b>Gone</b>'
+            : !s.remaining ? '<b>Landed</b>'
+            : s.remaining === s.n ? '<b>' + s.n + ' legs</b>, all landing'
+            : '<b>' + s.remaining + '</b> still to land') + '</span>'
+        + '<span class="cdscore">' + (!s.n || s.dead || !s.remaining
+            ? '\u2014' : '<b>' + (s.conditional * 100).toFixed(1) + '%</b>') + '</span>'
       + '</div>'
-      + '<div class="cdmeta">' + (s.n
-          ? '<span>' + odds(s.joint) + '</span>'
+      + '<div class="cdmeta">' + (!s.n ? '<span>every leg voided</span>'
+          : (s.dead || !s.remaining ? "" : '<span>' + odds(s.conditional) + '</span>')
             + '<span>' + s.hit + ' of ' + s.done + ' settled</span>'
-          : '<span>every leg voided</span>')
+            + (s.early ? '<span>' + s.early + ' clear with the game live</span>' : "")
+            /* The pre-game figure stays visible, because the record grades what
+               was claimed before first pitch, not what survived to the ninth. */
+            + (s.remaining < s.n
+                ? '<span>said ' + (s.joint * 100).toFixed(1) + '% pre-game</span>' : ""))
         + (s.voided ? '<span>' + s.voided + ' void</span>' : "")
       + '</div>'
       + rec.legs.map(legRow).join("")
@@ -5468,6 +5546,7 @@ function renderPlays(){
   buildParlay(today);
   settleScorecard();
   settleParlay();
+  settleParlayLive();
   if(S.parlayDirty){ saveParlay(); S.parlayDirty = false; }
   if(S.cardDirty){ saveScorecard(); S.cardDirty = false; }
   settlePicksFromBox();
