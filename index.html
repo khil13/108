@@ -566,7 +566,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "102 — two bats a club, four a game, all of them graded";
+const BUILD = "103 — fixes a cold start that would not open the Plays tab";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -1984,7 +1984,13 @@ function bestBats(g){
        rate knows nothing about. */
     const hr9 = facedHr9(spHr9, oppTeam);
     const penHr9 = (S.bullpens[oppTeam] || {}).hr9;
-    if(hr9 == null) return null;
+    /* An array, not null. forClub used to return a single pick or null and the
+       caller filtered; it now returns a list and the caller concatenates, and
+       this exit was missed in that change — so on the first open of the Plays
+       tab, before any pitcher or bullpen had loaded, bestBats threw on
+       null.concat and took the whole render with it. The tab could not be
+       opened at all, because S.tab was set before the render that failed. */
+    if(hr9 == null) return [];
     /* Once MLB posts the lineup, only men actually in it are eligible. Before
        that the pick is made blind, as it always was, and says so. */
     const lu = lineupIds(g, batTeam);
