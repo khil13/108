@@ -435,7 +435,12 @@ ul{margin:0;padding:0;list-style:none;}
 .cbteams{font-family:var(--display);font-size:16px;letter-spacing:.03em;color:var(--chalk);}
 .cbtime{margin-left:auto;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
   text-transform:uppercase;color:#738E93;}
-.cbrow{display:grid;grid-template-columns:46px 3px 1fr auto;gap:9px;align-items:center;
+/* The detail yields before the name and the percentage do. With the fourth
+   column sized `auto` a long trailing string pushed the third down to its
+   88px minimum, which clipped the number mid-digit — "Pederson 42…" — and
+   sometimes dropped it entirely. A cut-off percentage is worse than none. */
+.cbrow{display:grid;grid-template-columns:46px 3px minmax(132px,1fr) minmax(0,auto);
+  gap:9px;align-items:center;
   padding:4px 0;}
 .cblabel{font-family:var(--mono);font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;
   color:#738E93;}
@@ -444,6 +449,15 @@ ul{margin:0;padding:0;list-style:none;}
 .cbval b{font-family:var(--display);font-size:15px;font-weight:400;letter-spacing:.03em;}
 .cbrow .cbval b{color:var(--chalk);}
 .cbval em{font-style:normal;font-family:var(--mono);font-size:10px;color:#738E93;}
+/* On a narrow screen the trailing rate is the least important thing in the row,
+   so it is the first to go — the name and the percentage stay whole. Only that
+   rate: the other italics in this column ("starter not posted", "no rated bat
+   starting") are the entire content of their rows, and hiding those left a lone
+   club abbreviation explaining nothing. */
+@media(max-width:360px){
+  .cbrow{grid-template-columns:38px 3px minmax(112px,1fr) minmax(0,auto);gap:7px;}
+  .cbval em.rate{display:none;}
+}
 /* Only the superseded raw probability is struck through. Putting this on
    .cbval em also crossed out the Watch row's plate-appearance rate. */
 .cbraw{font-family:var(--mono);font-size:9.5px;color:#738E93;
@@ -552,7 +566,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "96 — a card knows what it still needs";
+const BUILD = "100 — a card can be finished before first pitch";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -639,9 +653,9 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, bpLgHr9:null, teamBat:{}, runners:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, bpLgHr9:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
-  odds:null, simBusy:false, calOut:null, ioMsg:null, parlay:{}, parlayDirty:false, park:null,
+  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, parlay:{}, parlayDirty:false, park:null,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
 };
 
@@ -1363,6 +1377,7 @@ function liveWinProb(g){
    the Plays tab. A week of use gives you a week. */
 const CARD_KEY = "108.scorecard";
 const FIT_KEY = "108.calfit";
+const CAL_KEY = "108.cal";
 const CARD_DAYS = 21;
 const CONF_BAR = 0.55;
 
@@ -1759,12 +1774,22 @@ function projectTotal(g){
      park that suppresses runs suppresses them for whoever is batting. */
   const park = parkOf(g.hid);
   expH *= park; expA *= park;
+  /* Then pulled toward the point the season says it is unbiased at. The split
+     between the two sides is left alone — only the total's spread was measured,
+     so only the total's spread is corrected. */
+  const sh = runShrink();
+  let shrunk = false;
+  if(sh){
+    const raw = expH + expA;
+    const adj = sh.inter + sh.slope * raw;
+    if(raw > 0 && adj > 0){ const f = adj / raw; expH *= f; expA *= f; shrunk = true; }
+  }
   expH = Math.max(1, expH); expA = Math.max(1, expA);
   /* Round the two sides first and derive the total from them, so the card
      never shows parts that fail to add up to the whole. */
   const h1 = Math.round(expH * 10) / 10, a1 = Math.round(expA * 10) / 10;
   return { home:h1, away:a1, total:Math.round((h1 + a1) * 10) / 10, usedSP, lg,
-           park:park === 1 ? null : park };
+           park:park === 1 ? null : park, shrunk };
 }
 
 /* A starter's strikeout total tonight: his rate per nine, over the innings he
@@ -1886,6 +1911,30 @@ function batPickGaps(g){
   return out;
 }
 
+/* The one thing that can tell two team-mates apart on a given night.
+
+   Everything else the bat pick weighs — the opposing starter, the bullpen behind
+   him, the park, the wind, the air — is common to a whole lineup. So the ranking
+   within a club came down to season home run rate, which barely moves, and the
+   same name was named every day. Handedness is different: it varies by batter and
+   by which arm happens to be starting, so the club's best right-handed bat can
+   genuinely overtake its best left-handed one when a lefty is on the mound.
+
+   The direction is not in dispute; the size is a judgement, and this is roughly
+   half of the published splits, damped for the same reason SP_WEIGHT is. Left
+   handers gain more from the advantage than right handers lose from its absence,
+   so the two sides are not mirrored — and at the league's rough mix of hands the
+   four cases average to 1.00, so this shifts the ranking without inflating
+   anyone's stated chance. */
+const PLATOON_SWING = 0.12;
+
+function platoonMult(batSide, pitchHand){
+  if(!batSide || !pitchHand) return 1;
+  if(batSide === "S") return 1 + PLATOON_SWING * 0.25;   // always takes the better side
+  const scale = batSide === "L" ? 1 : 0.75;
+  return 1 + (batSide !== pitchHand ? PLATOON_SWING : -PLATOON_SWING) * scale;
+}
+
 /* Who is actually in the lineup, when MLB has published it. */
 function lineupIds(g, teamId){
   const lu = g && g.lineup;
@@ -1943,9 +1992,12 @@ function bestBats(g){
     for(const b of pool){
       if(!b.perPA) continue;
       const r = watchRate(b);
-      ranked.push({ score:r.rate * hr9, batter:b.name, batterId:b.id, team:batTeam,
+      const side = S.bats[b.id] || null;
+      const hand = known ? p.hand : null;
+      const plat = platoonMult(side, hand);
+      ranked.push({ score:r.rate * plat * hr9, batter:b.name, batterId:b.id, team:batTeam,
                     perPA:b.perPA, hr:b.hr, pitcher:known ? p.name : null,
-                    hr9, spHr9, penHr9,
+                    hr9, spHr9, penHr9, plat, side, hand,
                     tba:!known, posted:!!lu, blended:r.rate, form:r.form });
     }
     if(!ranked.length) return null;
@@ -1961,7 +2013,7 @@ function bestBats(g){
     const lg = leagueFacedHr9();
     const armMult = lg && lg > 0
       ? Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, hr9 / lg)) : 1;
-    const mult = (cond ? cond.mult : 1) * armMult;
+    const mult = (cond ? cond.mult : 1) * armMult * (chosen.plat || 1);
     return Object.assign(chosen, { cond, armMult,
       adjusted:chosen.blended * mult,
       tonight:hrGameProb(chosen.blended * mult) });
@@ -2005,11 +2057,14 @@ const watchList = e => Array.isArray(e.watches) ? e.watches : (e.watch ? [e.watc
    wrong but not broken. */
 async function loadRosters(){
   const yr = new Date().getFullYear();
-  const out = {};
+  /* Two maps from one request. The person record carries batSide and the app was
+     reading the id and throwing the rest away — which is why the bat pick had
+     nothing that could tell one team-mate from another on a given night. */
+  const out = {}, bats = {};
   let j;
   try{
     j = await getJSON(MLB + "/teams?sportId=1&season=" + yr + "&hydrate=roster(person)");
-  }catch(e){ return out; }
+  }catch(e){ return { club:out, bats }; }
   for(const t of j.teams || []){
     if(!T[t.id]) continue;
     // The shape has varied; accept either a bare array or a nested one.
@@ -2017,11 +2072,15 @@ async function loadRosters(){
       : (t.roster && Array.isArray(t.roster.roster)) ? t.roster.roster : null;
     if(!list) continue;
     for(const entry of list){
-      const pid = (entry.person || {}).id;
-      if(pid) out[pid] = t.id;
+      const person = entry.person || {};
+      const pid = person.id;
+      if(!pid) continue;
+      out[pid] = t.id;
+      const side = (person.batSide || {}).code;
+      if(side) bats[pid] = side;
     }
   }
-  return out;
+  return { club:out, bats };
 }
 
 /* Every regular's season hitting line in one request, sorted by home runs,
@@ -2597,8 +2656,11 @@ async function loadDetail(){
 
   if(!Object.keys(S.hitters).length){
     if(!Object.keys(S.rosters).length){
-      S.rosters = await loadRosters();
+      const r = await loadRosters() || {};
+      S.rosters = r.club || {};
+      S.bats = r.bats || {};
       S.diag.rosters = Object.keys(S.rosters).length;
+      S.diag.bats = Object.keys(S.bats).length;
     }
     const hit = await loadHitters(S.rosters) || {};
     /* Defensive on the way in as well, so a future change to loadHitters cannot
@@ -4313,7 +4375,8 @@ function calibrationBlock(){
               + '<span class="' + (r === S.sweep.best ? "cal-good" : "") + '">'
               + r.brier.toFixed(4) + '</span></div>').join("")
         : "")
-    + '<p class="caveat">Recent form weighting: Brier ' + c.brier.toFixed(4)
+    + (c0 && c0.brier != null
+        ? '<p class="caveat">Recent form weighting: Brier ' + c.brier.toFixed(4)
       + ' with it, ' + c0.brier.toFixed(4) + ' without. '
       + (Math.abs(c.brier - c0.brier) < 5e-5
           ? 'Identical to four decimal places \u2014 counting the last ten twice makes '
@@ -4322,6 +4385,11 @@ function calibrationBlock(){
             : 'Counting the last ten twice makes it <b>worse</b>. Set RECENCY_W to 0.')
       + ' Bullpens remain untested: there is no historical record of which relievers were '
       + 'available on a given day.</p>'
+        : "")
+    + '<div class="mrow"><span>'
+      + (S.calAt ? 'last run ' + timeAgo(S.calAt) : 'saved from an earlier run')
+      + '</span><button class="btn" id="runCal"' + (S.calBusy ? " disabled" : "") + '>'
+      + (S.calBusy ? "Replaying\u2026" : "Run it again") + '</button></div>'
     + '</div>';
 }
 
@@ -4532,8 +4600,9 @@ function cardBlock(g){
               : gap > 0 ? "+" + gap.toFixed(1) + " vs average"
                         : gap.toFixed(1) + " vs average";
             const err = S.cal && S.cal.with
-              ? ' \u00b1' + S.cal.with.runMAE.toFixed(1) + ' typical'
+              ? ' \u00b7 give or take ' + S.cal.with.runMAE.toFixed(1)
               : "";
+            const cal = tot.shrunk ? ' \u00b7 calibrated' : "";
             const pk = tot.park && Math.abs(tot.park - 1) >= 0.03
               ? ' \u00b7 park ' + (tot.park > 1 ? "+" : "")
                 + Math.round((tot.park - 1) * 100) + '%'
@@ -4545,7 +4614,7 @@ function cardBlock(g){
                 + esc(word) + '</span>'
               + '<span class="cbodds sm">' + ab(g.aid) + ' ' + tot.away.toFixed(1)
                 + ' \u00b7 ' + ab(g.hid) + ' ' + tot.home.toFixed(1)
-                + esc(pk) + esc(err) + '</span>'
+                + esc(pk) + esc(cal) + esc(err) + '</span>'
               + '</div>';
           })()
         : "")
@@ -4588,7 +4657,7 @@ function cardBlock(g){
           + (mu.tonight != null
               ? ' <b>' + Math.round(mu.tonight * 100) + '%</b>'
               : "")
-          + ' <em>1 per ' + Math.round(mu.blended ? 1 / mu.blended : mu.perPA)
+          + ' <em class="rate">1 per ' + Math.round(mu.blended ? 1 / mu.blended : mu.perPA)
           + ' PA</em></span>'
         + '<span class="cbodds sm">'
           + (mu.rank ? 'next best \u00b7 ' : "")
@@ -4603,6 +4672,7 @@ function cardBlock(g){
               : esc(lastName(mu.pitcher)) + ' ' + mu.spHr9.toFixed(1)
                 + (mu.penHr9 != null ? ' \u00b7 pen ' + mu.penHr9.toFixed(1) : "")
                 + ' HR/9')
+          + (mu.side && mu.hand ? ' \u00b7 ' + mu.side + ' v ' + mu.hand + 'HP' : "")
           + (mu.posted ? ' \u00b7 in the lineup' : "")
           + '</span>'
         + '</div>').join("")
@@ -4842,6 +4912,95 @@ function poissonAtLeast(k, mean){
   return Math.max(0, Math.min(1, 1 - cum));
 }
 
+/* The calibration replays 1,249 games and fetches game logs for 250 starters, so
+   it is not something to make someone run twice. It was being lost on every
+   reload all the same — and worse than merely lost: runSpread() prefers the
+   season's measured error and silently fell back to the live record's, which is
+   twenty-odd games against twelve hundred. The card was quoting the noisier
+   number while the better one sat one button away.
+
+   The prediction arrays are dropped; they are large and only the click handler
+   uses them, which recomputes anyway. */
+function saveCal(){
+  /* A run that produced nothing must not overwrite one that did. The handler
+     calls this before it nulls out an empty result, so pressing "Run it again"
+     before the season data had loaded wrote a hollow object over the saved one
+     and loadCal then refused it — the calibration was gone for good, from a
+     button press that looked like it had simply failed. */
+  if(!S.cal || !S.cal.with || !S.cal.without) return;
+  if(S.cal.with.brier == null) return;
+  const keep = r => r ? { n:r.n, brier:r.brier, baseBrier:r.baseBrier, acc:r.acc,
+    runMAE:r.runMAE, parkMAE:r.parkMAE, naiveMAE:r.naiveMAE, runBias:r.runBias,
+    spN:r.spN, bands:r.bands, runBands:r.runBands } : null;
+  const cal = {};
+  for(const k in (S.cal || {})) cal[k] = keep(S.cal[k]);
+  try{
+    localStorage.setItem(CAL_KEY, JSON.stringify({
+      at:new Date().toISOString(), cal, sweep:S.sweep,
+      calOut:S.calOut ? { n:S.calOut.n, raw:S.calOut.raw, cal:S.calOut.cal,
+                          trained:S.calOut.trained } : null }));
+  }catch(e){}
+}
+
+function loadCal(){
+  try{
+    const raw = localStorage.getItem(CAL_KEY);
+    const c = raw ? JSON.parse(raw) : null;
+    /* calibrationBlock reads `with` and `without` without guarding them, so a
+       restored object missing either would kill the Odds tab on every load until
+       storage was cleared — a far worse failure than simply not persisting. The
+       optional variants below it are all guarded at the point of use. */
+    if(!c || !c.cal || !c.cal.with || !c.cal.without) return;
+    /* Every field calibrationBlock reads without guarding, not just the two
+       objects. A stored calibration missing any one of them would throw on the
+       Odds tab at every load until storage was cleared, which is the failure this
+       whole check exists to prevent. */
+    const need = ["brier", "baseBrier", "acc", "runMAE", "naiveMAE", "runBias"];
+    if(need.some(k => c.cal.with[k] == null)) return;
+    if(!Array.isArray(c.cal.with.bands)) return;
+    if(c.cal.without.brier == null) return;
+    S.cal = c.cal; S.sweep = c.sweep || null;
+    S.calOut = c.calOut || null; S.calAt = c.at || null;
+  }catch(e){}
+}
+
+/* How much of the run projection's spread is real.
+
+   The calibration's own bands answer this. Games projected at 8.0 scored 8.4,
+   those at 9.0 scored 9.1, those at 10.0 scored 9.6 — two runs of projected
+   spread producing barely one run of actual. Fitting actual on projected gives a
+   slope near 0.6, which is another way of stating what the block already says in
+   words: the projection ranks games but its distance from average is mostly
+   noise.
+
+   Using it raw as the mean of a distribution therefore overstates every run leg
+   at the tails. A card showing "under 9.5, projected 6.4" was reading 72% when
+   the season's own numbers put it nearer 65%. This shrinks the projection toward
+   the point where it is unbiased, by exactly the amount measured — nothing is
+   chosen here, and with no calibration run there is no shrink at all.
+
+   The same shape as calibrate() for probabilities, and applied in the same place:
+   to what the card shows, so the record grades it. */
+function runShrink(){
+  const b = S.cal && S.cal.with && S.cal.with.runBands;
+  if(!Array.isArray(b) || b.length < 3) return null;
+  let sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for(const r of b){
+    if(!(r.n > 0) || r.said == null || r.actual == null) continue;
+    sw += r.n; sx += r.n * r.said; sy += r.n * r.actual;
+    sxx += r.n * r.said * r.said; sxy += r.n * r.said * r.actual;
+  }
+  const den = sw * sxx - sx * sx;
+  if(!(den > 0)) return null;
+  const slope = (sw * sxy - sx * sy) / den;
+  const inter = (sy - slope * sx) / sw;
+  /* A slope at or above 1 means the projection is not over-dispersed and there is
+     nothing to correct; anything negative would invert it, which no amount of
+     miscalibration justifies. */
+  if(!isFinite(slope) || !isFinite(inter) || slope <= 0 || slope >= 1) return null;
+  return { slope, inter, pivot:inter / (1 - slope) };
+}
+
 /* ---------------- park factors ----------------
    Runs per game at each club's home ground against the league, computed from the
    season's own completed games. Nothing is fetched and nothing is hardcoded: the
@@ -4950,8 +5109,10 @@ function legsFor(g){
       : poissonAtLeast(Math.ceil(line), tot.total);
     add({ pk:g.pk, kind:"runs", line, over, p:over ? pOver : 1 - pOver,
           label:(over ? "Over " : "Under ") + line.toFixed(1) + " runs",
+          /* "projected 7.0 \u00b1 5.0 measured" reads as 7 plus 5, which is over the
+             line rather than under it. Plain words cannot be mistaken for a sum. */
           detail:"projected " + tot.total.toFixed(1)
-            + (sd ? " \u00b1 " + sd.toFixed(1) + " measured" : "") });
+            + (sd ? ", give or take " + sd.toFixed(1) : "") });
   }
 
   for(const mu of bestBats(g)){
@@ -4998,12 +5159,29 @@ function legsFor(g){
 /* Build once, for a date, and never revise — the same discipline as the
    scorecard. Highest-probability leg from each game, one apiece, until eight. */
 function buildParlay(date){
-  if(S.parlay[date]) return S.parlay[date];
   const games = S.games.filter(g => g.date === date && g.st === "sched");
-  if(games.length < 3) return null;
+  const existing = S.parlay[date];
+
+  /* Built once and then frozen was wrong in one specific way. loadDetail fetches
+     hitters last, so a card assembled in the window after the starters land but
+     before the bats do sees no home run or steal candidates at all — and kept
+     that shape for the day, leaving half the card as run legs, which is the
+     component the calibration likes least.
+
+     So it may be finished, but only while nothing has begun: every leg still
+     unsettled, and every game on it still listed as scheduled. That is the same
+     discipline recordPrediction uses. It is not revision with hindsight; it is
+     completing a card that was written before the data arrived. */
+  const sched = {};
+  for(const g of games) sched[String(g.pk)] = true;
+  const openStill = existing && (existing.legs || []).length
+    && existing.legs.every(l => l.hit == null && !l.clear && !l.dead && !l.void
+                                && sched[String(l.pk)]);
+  if(existing && !openStill) return existing;
+  if(games.length < 3) return existing || null;
   const all = [];
   for(const g of games) for(const leg of legsFor(g)) all.push(leg);
-  if(!all.length) return null;
+  if(!all.length) return existing || null;
   all.sort((a, b) => b.p - a.p);
 
   /* One leg per game, and built in three passes so the card is actually varied.
@@ -5029,7 +5207,11 @@ function buildParlay(date){
   /* Short slate: rather than pad with a second leg from a game already in the
      card, the card is simply shorter. A correlated leg would flatter the joint
      number, which is the one thing this must not do. */
-  if(legs.length < 3) return null;
+  if(legs.length < 3) return existing || null;
+  /* Only replaced by something more varied. Once every kind the slate offers is
+     represented, the card settles and stops moving. */
+  const kinds = ls => new Set(ls.map(l => l.kind)).size;
+  if(existing && kinds(legs) <= kinds(existing.legs)) return existing;
   const joint = legs.reduce((n, l) => n * l.p, 1);
   const rec = { date, at:new Date().toISOString(), legs, joint, built:legs.length };
   S.parlay[date] = rec;
@@ -5743,6 +5925,7 @@ document.addEventListener("click", e => {
       S.calOut = basis ? holdoutCheck(basis.preds) : null;
       try{ localStorage.setItem(FIT_KEY, JSON.stringify(S.calFit)); }catch(err){}
       if(!S.cal.with) S.cal = null;
+      else { S.calAt = new Date().toISOString(); saveCal(); }
       S.calBusy = false; render();
     })();
     return;
@@ -5873,6 +6056,7 @@ S.baseline = loadBaseline();
 S.card = loadScorecard();
 repairScorecard();
 S.parlay = loadParlay();
+loadCal();
 try{
   const f = JSON.parse(localStorage.getItem(FIT_KEY) || "null");
   if(f && typeof f.a === "number" && typeof f.b === "number") S.calFit = f;
