@@ -566,7 +566,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "103 — fixes a cold start that would not open the Plays tab";
+const BUILD = "105 — roster data expires, and a trade prints once";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -653,9 +653,9 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, bpLgHr9:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, bpLgHr9:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
-  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, parlay:{}, parlayDirty:false, park:null,
+  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, parlay:{}, parlayDirty:false, park:null,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
 };
 
@@ -2396,9 +2396,19 @@ async function loadFeed(){
       kind:feedKind(t)
     });
   }
+  /* MLB files a multi-player trade once per player, each carrying the same
+     sentence, so a five-for-one arrived as five identical paragraphs. Collapsed
+     to one, with a count of how many players the move covered. */
+  const seen = {}, merged = [];
+  for(const e of out){
+    const key = e.date + "|" + e.desc;
+    if(seen[key]){ seen[key].also = (seen[key].also || 0) + 1; continue; }
+    seen[key] = e;
+    merged.push(e);
+  }
   // Newest first; MLB returns them oldest first.
-  out.sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
-  return out;
+  merged.sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+  return merged;
 }
 
 /* Refetched when the tab is opened and the last read is more than ten minutes
@@ -2679,8 +2689,32 @@ async function ensureSeason(){
   render();
 }
 
+/* Rosters, hitters and bullpens were fetched once and never again. Scores poll
+   every thirty seconds and the transactions feed every ten minutes, so the app
+   could print a trade in the Feed while still listing the player under his old
+   club on the Plays tab — two sets of facts from the same source disagreeing
+   because one had an expiry and the other did not. On a phone, where the app sits
+   in the background for days rather than being reloaded, that gap only widens.
+
+   Three hours, or any change of date, whichever comes first. The date check is
+   the one that matters: most roster moves land overnight. */
+const DETAIL_TTL = 3 * 60 * 60 * 1000;
+
+function detailStale(){
+  if(S.detailState !== "ready" || !S.detailAt) return false;
+  if(S.detailDay && S.detailDay !== iso(new Date())) return true;
+  return Date.now() - S.detailAt > DETAIL_TTL;
+}
+
 async function loadDetail(){
-  if(S.detailState === "loading" || S.detailState === "ready") return;
+  if(S.detailState === "loading") return;
+  if(S.detailState === "ready"){
+    if(!detailStale()) return;
+    /* Cleared so the guards below fetch again rather than skipping. Each piece
+       re-renders as it lands, the same as on a cold start. */
+    S.pitchers = {}; S.bullpens = {}; S.bpLg = null; S.bpLgHr9 = null;
+    S.rosters = {}; S.bats = {}; S.hitters = {}; S.teamBat = {}; S.runners = {};
+  }
   S.detailState = "loading";
   render();
   try{
@@ -2722,6 +2756,8 @@ async function loadDetail(){
   S.diag.hitters = Object.values(S.hitters).reduce((n,a) => n + a.length, 0);
 
     S.detailState = "ready";
+    S.detailAt = Date.now();
+    S.detailDay = iso(new Date());
   }catch(e){
     // Never leave a card stuck on "loading" because one call blew up.
     S.detailState = "error";
@@ -4793,6 +4829,8 @@ function renderFeed(){
               + '<span class="fclub">' + (e.team ? ab(e.team) : "\u2014") + '</span>'
               + '<span class="chip ' + e.kind.tone + '">' + esc(e.kind.tag) + '</span>'
               + (il ? '<span class="chip slate">' + il + '</span>' : "")
+              + (e.also ? '<span class="chip slate">' + (e.also + 1)
+                  + ' players</span>' : "")
             + '</div>'
             + '<p class="fdesc">' + esc(e.desc) + '</p>'
           + '</div>'
@@ -5667,7 +5705,12 @@ function scorecardBlock(){
                 + 'a verdict.';
             })())
       + '</p>'
-    + byDay.slice(0, 5).map(d => '<h3 class="cdday">' + esc(label(d.date)) + '</h3>'
+    + (() => {
+        /* Five days of games, each now seven rows deep — a matchup line, four bats
+           and two arms — ran to several hundred rows. The most recent day is the
+           one that gets read; the rest fold away behind a count, the same way the
+           Feed handles its older moves. Nothing is dropped. */
+        const dayBlock = d => '<h3 class="cdday">' + esc(label(d.date)) + '</h3>'
         + d.items.map(e => {
             const homeWon = e.hs > e.as;
             const tie = e.hs === e.as;
@@ -5748,7 +5791,22 @@ function scorecardBlock(){
                       + (gap > 0 ? "+" : "") + gap.toFixed(1) + ')');
                 }).join("") : "")
               + '</article>';
-          }).join("")).join("")
+          }).join("");
+
+        const recent = byDay.slice(0, 1), older = byDay.slice(1, 5);
+        const olderGames = older.reduce((n, d) => n + d.items.length, 0);
+        return recent.map(dayBlock).join("")
+          + (olderGames
+              ? '<button class="disc notes" data-recordolder="1" aria-expanded="'
+                + (S.recordOlder ? "true" : "false") + '">'
+                + '<span>' + olderGames + ' earlier '
+                + (olderGames === 1 ? "game" : "games") + ', back to '
+                + esc(label(older[older.length - 1].date)) + '</span>'
+                + '<i class="chev" aria-hidden="true">'
+                + (S.recordOlder ? "\u25B4" : "\u25BE") + '</i></button>'
+                + (S.recordOlder ? older.map(dayBlock).join("") : "")
+              : "");
+      })()
     + '<p class="note">Each pick was recorded before the game and has not been revised. '
     + 'A tick on the side means it won. On a bat to watch it means he homered \u2014 '
     + 'the row named him as one to watch, so that is the outcome of the pick, not a '
@@ -5989,6 +6047,8 @@ document.addEventListener("click", e => {
   }
 
   if(e.target.closest("[data-feedolder]")){ S.feedOlder = !S.feedOlder; render(); return; }
+
+  if(e.target.closest("[data-recordolder]")){ S.recordOlder = !S.recordOlder; render(); return; }
 
   const fd = e.target.closest("[data-feed]");
   if(fd){ S.feedMine = fd.dataset.feed === "mine"; render(); return; }
