@@ -449,6 +449,9 @@ ul{margin:0;padding:0;list-style:none;}
 .cbval b{font-family:var(--display);font-size:15px;font-weight:400;letter-spacing:.03em;}
 .cbrow .cbval b{color:var(--chalk);}
 .cbval em{font-style:normal;font-family:var(--mono);font-size:10px;color:#738E93;}
+/* Hit and run sit next to the homer figure and keep their weight, so the row
+   reads as three chances rather than one number and some trailing detail. */
+.cbval em.props{color:var(--slate);font-size:10.5px;}
 /* On a narrow screen the trailing rate is the least important thing in the row,
    so it is the first to go — the name and the percentage stay whole. Only that
    rate: the other italics in this column ("starter not posted", "no rated bat
@@ -566,7 +569,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "105 — roster data expires, and a trade prints once";
+const BUILD = "107 — hits, runs and homers, all three graded";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -655,7 +658,7 @@ const S = {
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
   bullpens:{}, bpLg:null, bpLgHr9:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
-  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, parlay:{}, parlayDirty:false, park:null,
+  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false, park:null,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
 };
 
@@ -1568,7 +1571,9 @@ function settleScorecard(){
       const b = S.box[boxKey(g.pk, w.id)];
       if(!b) continue;                          // never polled; not evidence of anything
       if(!battedIn(b)){ w.dnp = true; continue; }
-      w.result = { hr:b.todayHr != null ? b.todayHr : null, line:b.today || null };
+      w.result = { hr:b.todayHr != null ? b.todayHr : null,
+        h:b.batH != null ? b.batH : null, r:b.batR != null ? b.batR : null,
+        line:b.today || null };
     }
     changed = true;
   }
@@ -1636,7 +1641,9 @@ async function settlePicksFromBox(){
          it without a plate appearance, did not play. Recorded as such rather
          than failed. */
       const b = box[w.id];
-      if(battedIn(b)) w.result = { hr:b.todayHr != null ? b.todayHr : 0, line:b.today || null };
+      if(battedIn(b)) w.result = { hr:b.todayHr != null ? b.todayHr : 0,
+        h:b.batH != null ? b.batH : 0, r:b.batR != null ? b.batR : 0,
+        line:b.today || null };
       else w.dnp = true;
     }
     if(Array.isArray(e.ks)) for(const k of e.ks){
@@ -1707,6 +1714,7 @@ function scorecardSummary(){
 
   let absErr = 0, totN = 0, watchN = 0, watchHr = 0, kN = 0, kErr = 0, kBias = 0;
   let watchExp = 0, watchVar = 0, watchExpN = 0, watchHrP = 0, watchDnp = 0;
+  let hitN = 0, hitGot = 0, hitExp = 0, runN = 0, runGot = 0, runExp = 0;
   for(const e of settled){
     if(e.total != null){ absErr += Math.abs(e.total - (e.hs + e.as)); totN++; }
     for(const w of watchList(e)){
@@ -1720,6 +1728,13 @@ function scorecardSummary(){
         watchExp += w.p; watchVar += w.p * (1 - w.p); watchExpN++;
         if(w.result.hr > 0) watchHrP++;
       }
+      /* Hits and runs, counted the same way and against the same kind of bar. */
+      if(w.pHit != null && w.result.h != null){
+        hitN++; hitExp += w.pHit; if(w.result.h > 0) hitGot++;
+      }
+      if(w.pRun != null && w.result.r != null){
+        runN++; runExp += w.pRun; if(w.result.r > 0) runGot++;
+      }
     }
     if(Array.isArray(e.ks)) for(const k of e.ks){
       if(k.actual == null) continue;
@@ -1732,6 +1747,7 @@ function scorecardSummary(){
            baseBrier:n ? baseBrier / n : null,
            runMAE:totN ? absErr / totN : null, totN,
            watchN, watchHr, watchExp, watchExpN, watchHrP, watchDnp,
+           hitN, hitGot, hitExp, runN, runGot, runExp,
            watchSd:watchVar > 0 ? Math.sqrt(watchVar) : null,
            high, highRight,
            kN, kMAE:kN ? kErr / kN : null, kBias:kN ? kBias / kN : null };
@@ -1931,11 +1947,18 @@ const PLATOON_SWING = 0.12;
 /* How many bats each club gets on the card. */
 const WATCH_PER_CLUB = 2;
 
-function platoonMult(batSide, pitchHand){
+/* The swing is for power. Contact platoon splits are roughly half the size —
+   a batting average moves about twenty points across the handedness matchup
+   where a home run rate moves a fifth — so hits and runs pass a smaller scale
+   rather than reusing the homer figure, which would have overstated them. */
+const CONTACT_PLATOON = 0.5;
+
+function platoonMult(batSide, pitchHand, scaleBy){
   if(!batSide || !pitchHand) return 1;
-  if(batSide === "S") return 1 + PLATOON_SWING * 0.25;   // always takes the better side
+  const swing = PLATOON_SWING * (scaleBy == null ? 1 : scaleBy);
+  if(batSide === "S") return 1 + swing * 0.25;   // always takes the better side
   const scale = batSide === "L" ? 1 : 0.75;
-  return 1 + (batSide !== pitchHand ? PLATOON_SWING : -PLATOON_SWING) * scale;
+  return 1 + (batSide !== pitchHand ? swing : -swing) * scale;
 }
 
 /* Who is actually in the lineup, when MLB has published it. */
@@ -1944,6 +1967,17 @@ function lineupIds(g, teamId){
   if(!lu) return null;
   const arr = teamId === g.hid ? lu.home : teamId === g.aid ? lu.away : null;
   return Array.isArray(arr) && arr.length ? arr : null;
+}
+
+/* The league's opponent batting average among the starters on file, so a hit
+   projection is measured against the same population its arm comes from. */
+function leagueOppAvg(){
+  let sum = 0, n = 0;
+  for(const key in S.pitchers){
+    const v = parseFloat((S.pitchers[key] || {}).oppAvg);
+    if(isFinite(v) && v > 0){ sum += v; n++; }
+  }
+  return n >= 5 ? sum / n : null;
 }
 
 /* League HR/9 among the starters on file, innings-weighted so a long reliever
@@ -2006,8 +2040,12 @@ function bestBats(g){
       const side = S.bats[b.id] || null;
       const hand = known ? p.hand : null;
       const plat = platoonMult(side, hand);
+      const platC = platoonMult(side, hand, CONTACT_PLATOON);
       ranked.push({ score:r.rate * plat * hr9, batter:b.name, batterId:b.id, team:batTeam,
-                    perPA:b.perPA, hr:b.hr, pitcher:known ? p.name : null,
+                    perPA:b.perPA, hr:b.hr,
+                    hRate:b.pa > 0 ? (b.h || 0) / b.pa : 0,
+                    rRate:b.pa > 0 ? (b.r || 0) / b.pa : 0, platC,
+                    pitcher:known ? p.name : null,
                     hr9, spHr9, penHr9, plat, side, hand,
                     tba:!known, posted:!!lu, blended:r.rate, form:r.form });
     }
@@ -2035,11 +2073,37 @@ function bestBats(g){
     const lg = leagueFacedHr9();
     const armMult = lg && lg > 0
       ? Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, hr9 / lg)) : 1;
+    /* A hit is a different question from a home run, so it answers to a
+       different arm figure: the opposing starter's opponent average rather than
+       his HR/9, measured against the league the same damped way. Runs are
+       different again — a batter scores when his club scores, so his rate is
+       scaled by what the run projection expects of that club tonight against
+       what it usually manages. Both are measured; neither invents a weight. */
+    const lgAvg = leagueOppAvg();
+    const oppAvg = known && p.oppAvg != null ? parseFloat(p.oppAvg) : null;
+    const hitMult = (lgAvg && oppAvg) ?
+      Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, oppAvg / lgAvg)) : 1;
+    const tot = projectTotal(g);
+    const own = S.runs[batTeam];
+    const runMult = (tot && own && own.g > 0) ? (() => {
+      const tonight = batTeam === g.hid ? tot.home : tot.away;
+      const usual = own.rs / own.g;
+      return usual > 0
+        ? Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, tonight / usual)) : 1;
+    })() : 1;
+
     return picks.map((chosen, i) => {
       const mult = (cond ? cond.mult : 1) * armMult * (chosen.plat || 1);
       return Object.assign(chosen, { cond, armMult,
         adjusted:chosen.blended * mult,
-        tonight:hrGameProb(chosen.blended * mult),
+        raw:gameProb(chosen.blended * mult),
+        tonight:calibrateBat(gameProb(chosen.blended * mult)),
+        /* Both scaled by the platoon edge as well, since handedness bears on
+           contact as much as on power. */
+        pHit:calibrateMarket("hit",
+          gameProb(chosen.hRate * hitMult * (chosen.platC || 1))),
+        pRun:calibrateMarket("run",
+          gameProb(chosen.rRate * runMult * (chosen.platC || 1))),
         /* Only a doubleheader's later game is "next best"; the second pick of a
            pair is not, and its own percentage says where it stands. */
         rank:start > 0 ? start + i : 0 });
@@ -2058,12 +2122,14 @@ function bestBats(g){
    Storing this with each pick is what lets the record say how many homers were
    expected, and so whether a lean stretch is a bad picker or a bad fortnight. */
 const PA_PER_GAME = 4.3;
-const hrGameProb = rate =>
+const gameProb = rate =>
   rate > 0 && rate < 1 ? 1 - Math.pow(1 - rate, PA_PER_GAME) : null;
+const hrGameProb = gameProb;   // the same arithmetic, named for its first use
 
 const watchOf = mu => Object.assign(
   { name:mu.batter, team:mu.team, id:mu.batterId,
-    p:mu.tonight != null ? mu.tonight : hrGameProb(mu.blended) },
+    p:mu.tonight != null ? mu.tonight : gameProb(mu.blended),
+    pHit:mu.pHit, pRun:mu.pRun },
   /* Picked against a stand-in rather than the real arm, so it can be improved
      on while the game has still not started. */
   mu.tba ? { tba:true } : null);
@@ -2165,7 +2231,9 @@ async function loadHitters(rosters){
     if(traded) continue;
     (byTeam[tid] = byTeam[tid] || []).push({
       id:pid,
-      name:(s.player || {}).fullName || "—", hr, pa, perPA:pa / hr
+      name:(s.player || {}).fullName || "—", hr, pa, perPA:pa / hr,
+      /* Already in the response, and thrown away until now. */
+      h:Number(st.hits) || 0, r:Number(st.runs) || 0
     });
   }
     /* Two lists, unioned, because the pool was being chosen by one measure and
@@ -2590,15 +2658,39 @@ const AIR_ELASTICITY = 1.3;
 const WIND_PER_MPH = 0.015;
 const WIND_CAP = 0.25;
 
+/* What the air is doing across tonight's slate.
+
+   The air term measured every park against the sea-level standard, which is
+   defined at 59F — a temperature baseball is rarely played in. So a 95% park
+   scored x1.065, a 93% park x1.091, and on a summer slate every single game was
+   multiplied upward with nothing pulling the other way. That is a systematic
+   inflation of every bat pick, not a park effect.
+
+   Measured against the slate's own mean instead, so Coors is still high and a
+   cool coastal evening is genuinely low. The cost is that a night which is hot
+   everywhere now reads as neutral rather than raised; the benefit is that the
+   term no longer adds several per cent to every number in the app. */
+function slateAir(){
+  let sum = 0, n = 0;
+  for(const g of S.games){
+    const w = wxAt(g.venueId, g.start);
+    if(w && w.air != null){ sum += w.air; n++; }
+  }
+  return n >= 3 ? sum / n : null;
+}
+
 function hrConditions(g){
   const v = S.venues[g.venueId];
   const w = wxAt(g.venueId, g.start);
   if(!w) return null;
   const roofShut = !!(v && v.roof && /dome|indoor|closed/i.test(v.roof));
   let mult = 1, air = null, out = null;
-  if(w.air != null){
+  const ref = slateAir();
+  if(w.air != null && ref != null){
     air = w.air;
-    mult *= 1 + AIR_ELASTICITY * ((100 - w.air) / 100);
+    mult *= 1 + AIR_ELASTICITY * ((ref - w.air) / 100);
+  } else if(w.air != null){
+    air = w.air;          // shown, but nothing to measure it against yet
   }
   /* A closed roof means there is no wind in play, whatever the forecast says
      about the weather outside it. */
@@ -2855,6 +2947,8 @@ function readBoxscore(j){
         batPA:tb.plateAppearances != null ? tb.plateAppearances : null,
         batAB:tb.atBats != null ? tb.atBats : null,
         batSb:tb.stolenBases != null ? tb.stolenBases : null,
+        batH:tb.hits != null ? tb.hits : null,
+        batR:tb.runs != null ? tb.runs : null,
         /* MLB has used both names for this field over the years. */
         pitches:tp.numberOfPitches != null ? tp.numberOfPitches
                : tp.pitchesThrown != null ? tp.pitchesThrown : null,
@@ -4140,8 +4234,8 @@ function pictureBlock(lg){
 
    Fitted on the same games it is scored against, which is mild overfitting —
    negligible with two parameters over a thousand games, but worth stating. */
-function fitCalibration(preds){
-  if(!preds || preds.length < 200) return null;
+function fitCalibration(preds, min){
+  if(!preds || preds.length < (min == null ? 200 : min)) return null;
   let a = 1, b = 0;
   const lr = 0.3;
   for(let iter = 0; iter < 600; iter++){
@@ -4195,6 +4289,84 @@ function holdoutCheck(preds){
   if(!fit) return null;
   const out = scoreWith(fit, preds.slice(cut));
   return out ? Object.assign({ fit, trained:cut }, out) : null;
+}
+
+/* ---------------- the bat number, against what happened ----------------
+   The homer picks came in 2.5 sigma under their own expectation over 162 graded
+   picks — 24 against 37.2, a stated rate about 0.6 of the real one. That is too
+   far out to be a bad run, and the cause is structural: the pick is the largest
+   of eight noisy rates, and the largest of several noisy estimates is biased
+   upward by construction. Nothing in watchRate regresses against that, and the
+   last five games are weighted four times over on a twenty-plate-appearance
+   sample, which hands the bat that happened to run hot an extra push.
+
+   Rather than guess a shrink, this measures one. Every settled pick carries the
+   probability it was given and whether he homered, so the same Platt mapping the
+   side model uses is fitted to them. Sixty picks is the floor — below that the
+   correction would be noisier than the thing it corrects.
+
+   It refits as the record grows, so if the underlying pick improves the
+   correction shrinks toward doing nothing on its own. */
+const BAT_FIT_MIN = 60;
+
+/* The three markets, and where each one's stated chance and outcome live. */
+const MARKETS = {
+  hr:  { field:"p",    got:r => r.hr > 0, label:"homered" },
+  hit: { field:"pHit", got:r => r.h  > 0, label:"got a hit" },
+  run: { field:"pRun", got:r => r.r  > 0, label:"scored" }
+};
+
+function batPreds(market){
+  const m = MARKETS[market] || MARKETS.hr;
+  const out = [];
+  for(const key in S.card){
+    const e = S.card[key];
+    if(!e || e.hs == null) continue;
+    for(const w of watchList(e)){
+      if(!w.result || w.dnp) continue;
+      const p = w[m.field];
+      if(p == null) continue;
+      const got = m.got(w.result);
+      if(got == null) continue;
+      out.push({ p, homeWon:!!got });
+    }
+  }
+  return out;
+}
+
+/* One fit per market, refitted when its record grows. Hits and runs get the same
+   treatment as homers on principle, though only the homer market has yet shown a
+   bias large enough to need it — if the others turn out well calibrated their
+   mappings will sit near the identity and do nothing. */
+function marketFit(market){
+  const preds = batPreds(market);
+  S.batFitN = S.batFitN || {};
+  S.batFit = S.batFit || {};
+  if(preds.length !== S.batFitN[market]){
+    S.batFitN[market] = preds.length;
+    S.batFit[market] = fitCalibration(preds, BAT_FIT_MIN);
+  }
+  return S.batFit[market];
+}
+
+const batFit = () => marketFit("hr");
+
+function calibrateMarket(market, p){
+  const f = marketFit(market);
+  if(!f || p == null || !isFinite(p)) return p;
+  if(!isFinite(f.a) || !isFinite(f.b) || f.a <= 0) return p;
+  const q = Math.min(0.999, Math.max(0.001, p));
+  const out = 1 / (1 + Math.exp(-(f.a * Math.log(q / (1 - q)) + f.b)));
+  return isFinite(out) ? out : p;
+}
+
+function calibrateBat(p){
+  const f = batFit();
+  if(!f || p == null || !isFinite(p)) return p;
+  if(!isFinite(f.a) || !isFinite(f.b) || f.a <= 0) return p;
+  const q = Math.min(0.999, Math.max(0.001, p));
+  const out = 1 / (1 + Math.exp(-(f.a * Math.log(q / (1 - q)) + f.b)));
+  return isFinite(out) ? out : p;
 }
 
 /* Apply it, when one has been fitted. */
@@ -4742,6 +4914,14 @@ function cardBlock(g){
           + (mu.tonight != null
               ? ' <b>' + Math.round(mu.tonight * 100) + '%</b>'
               : "")
+          /* Hit and run alongside the homer, in the order they are likeliest. */
+          + (mu.pHit != null || mu.pRun != null
+              ? ' <em class="props">'
+                + (mu.pHit != null ? 'H ' + Math.round(mu.pHit * 100) + '%' : "")
+                + (mu.pHit != null && mu.pRun != null ? ' \u00b7 ' : "")
+                + (mu.pRun != null ? 'R ' + Math.round(mu.pRun * 100) + '%' : "")
+                + '</em>'
+              : "")
           + ' <em class="rate">1 per ' + Math.round(mu.blended ? 1 / mu.blended : mu.perPA)
           + ' PA</em></span>'
         + '<span class="cbodds sm">'
@@ -4757,6 +4937,9 @@ function cardBlock(g){
               : esc(lastName(mu.pitcher)) + ' ' + mu.spHr9.toFixed(1)
                 + (mu.penHr9 != null ? ' \u00b7 pen ' + mu.penHr9.toFixed(1) : "")
                 + ' HR/9')
+          + (mu.raw != null && mu.tonight != null
+              && Math.abs(mu.raw - mu.tonight) >= 0.02
+              ? ' \u00b7 was ' + Math.round(mu.raw * 100) + '%' : "")
           + (mu.side && mu.hand ? ' \u00b7 ' + mu.side + ' v ' + mu.hand + 'HP' : "")
           + (mu.posted ? ' \u00b7 in the lineup' : "")
           + '</span>'
@@ -5622,6 +5805,19 @@ function scorecardBlock(){
       + '<div><b>' + (s.watchN ? s.watchHr + '/' + s.watchN : "\u2014")
         + '</b><span>bats homered</span></div>'
     + '</div>'
+    /* Every bat named is now graded on three counts, not one. Each cell reads
+       "landed of graded", and the sentence below gives each its expectation,
+       because a count without a bar under it says nothing. */
+    + (s.hitN || s.runN
+        ? '<div class="ledger">'
+          + '<div><b>' + (s.hitN ? s.hitGot + '/' + s.hitN : "\u2014")
+            + '</b><span>got a hit</span></div>'
+          + '<div><b>' + (s.runN ? s.runGot + '/' + s.runN : "\u2014")
+            + '</b><span>scored</span></div>'
+          + '<div><b>' + (s.watchExpN ? s.watchHrP + '/' + s.watchExpN : "\u2014")
+            + '</b><span>homered</span></div>'
+          + '</div>'
+        : "")
     + '<p class="note cdsum">'
       + (s.n
           ? 'Sides called right ' + Math.round(s.acc * 100) + '% of the time '
@@ -5680,6 +5876,15 @@ function scorecardBlock(){
               }
               return line + '. ';
             })()
+          : "")
+      + ((s.hitN || s.runN)
+          ? 'Of the same picks, '
+            + (s.hitN ? s.hitGot + ' of ' + s.hitN + ' got a hit against '
+                + s.hitExp.toFixed(1) + ' expected' : "")
+            + (s.hitN && s.runN ? ', and ' : "")
+            + (s.runN ? s.runGot + ' of ' + s.runN + ' scored against '
+                + s.runExp.toFixed(1) + ' expected' : "")
+            + '. '
           : "")
       + (s.watchDnp
           ? s.watchDnp + (s.watchDnp === 1 ? ' bat sat' : ' bats sat')
@@ -5817,7 +6022,21 @@ function scorecardBlock(){
     + 'A bat that was rested draws a dash for the same reason as a scratched starter: the '
     + 'lineup card is not published when the pick is made, so a day off is the manager\u2019s '
     + 'decision rather than the model\u2019s error. '
-    + 'The number of bats named per game has changed twice: one across both clubs before '
+    + (() => {
+        const f = batFit();
+        if(!f) return '';
+        return '<p class="note">Bat chances are mapped through what has actually '
+          + 'happened, the same way the side model is: sigmoid('
+          + f.a.toFixed(2) + ' \u00d7 logit(p) '
+          + (f.b >= 0 ? '+ ' : '\u2212 ') + Math.abs(f.b).toFixed(2) + '), fitted on '
+          + f.n + ' graded picks. The picks came in well under their own expectation, '
+          + 'and the reason is structural rather than unlucky: the pick is the largest of '
+          + 'eight noisy rates, and the largest of several noisy estimates runs high by '
+          + 'construction. This corrects by the amount the record measures, and refits as '
+          + 'the record grows \u2014 so if the underlying pick improves, the correction '
+          + 'fades on its own.</p>';
+      })()
+    + '<p class="note">The number of bats named per game has changed twice: one across both clubs before '
     + 'build 78, one per club after it, and two per club from build 102. So the '
     + 'bats-homered count is not comparable across those boundaries, and the second pick '
     + 'of a pair is a lower-probability bat by construction, which pulls the raw hit rate '
