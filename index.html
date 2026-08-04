@@ -452,14 +452,16 @@ ul{margin:0;padding:0;list-style:none;}
 /* Hit and run sit next to the homer figure and keep their weight, so the row
    reads as three chances rather than one number and some trailing detail. */
 .cbval em.props{color:var(--slate);font-size:10.5px;}
-/* On a narrow screen the trailing rate is the least important thing in the row,
-   so it is the first to go — the name and the percentage stay whole. Only that
-   rate: the other italics in this column ("starter not posted", "no rated bat
-   starting") are the entire content of their rows, and hiding those left a lone
-   club abbreviation explaining nothing. */
+/* A Watch row carries a name and three chances, which will not fit one line at
+   any phone width. It wraps rather than clipping: a truncated percentage is
+   worse than a taller row, and these three numbers are the point of the row. */
+.cbval.wrap{white-space:normal;overflow:visible;line-height:1.4;}
+/* Three chances now share this column with the name, so it gets more of the row
+   on a narrow screen and the hit and run figures shorten to their initials —
+   which they already carry. The detail column is the one allowed to truncate. */
 @media(max-width:360px){
-  .cbrow{grid-template-columns:38px 3px minmax(112px,1fr) minmax(0,auto);gap:7px;}
-  .cbval em.rate{display:none;}
+  .cbrow{grid-template-columns:34px 3px minmax(150px,1fr) minmax(0,auto);gap:6px;}
+  .cbval em.props{font-size:9.5px;}
 }
 /* Only the superseded raw probability is struck through. Putting this on
    .cbval em also crossed out the Watch row's plate-appearance rate. */
@@ -569,7 +571,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "107 — hits, runs and homers, all three graded";
+const BUILD = "108 — tonight\u2019s expected hits, runs and homers, up front";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -4910,7 +4912,7 @@ function cardBlock(g){
     + bats.map(mu => '<div class="cbrow">'
         + '<span class="cblabel">Watch</span>'
         + '<span class="tbar" style="background:' + col(mu.team) + '" aria-hidden="true"></span>'
-        + '<span class="cbval">' + esc(lastName(mu.batter))
+        + '<span class="cbval wrap">' + esc(lastName(mu.batter))
           + (mu.tonight != null
               ? ' <b>' + Math.round(mu.tonight * 100) + '%</b>'
               : "")
@@ -4922,10 +4924,10 @@ function cardBlock(g){
                 + (mu.pRun != null ? 'R ' + Math.round(mu.pRun * 100) + '%' : "")
                 + '</em>'
               : "")
-          + ' <em class="rate">1 per ' + Math.round(mu.blended ? 1 / mu.blended : mu.perPA)
-          + ' PA</em></span>'
+          + '</span>'
         + '<span class="cbodds sm">'
           + (mu.rank ? 'next best \u00b7 ' : "")
+
           /* What the ballpark did to it, when it did anything worth naming. */
           + (mu.cond && Math.abs(mu.cond.mult - 1) >= 0.03
               ? (mu.cond.mult > 1 ? '+' : "")
@@ -5626,6 +5628,43 @@ function parlaySummary(rec){
            joint:live.reduce((n, l) => n * l.p, 1) };
 }
 
+/* What tonight's named bats are collectively expected to do, before a pitch is
+   thrown. The same three markets the record grades afterwards, in the same shape:
+   an expectation across every bat on the card, so the slate has a bar to be read
+   against rather than thirty separate percentages to be held in the head.
+
+   Summed probabilities, not a count of likely bats — the expected number of the
+   named bats who get a hit is the sum of their chances, and that is the figure
+   the record's tally is compared with. */
+function slateOutlook(games){
+  let n = 0, hit = 0, run = 0, hr = 0, hitN = 0, runN = 0, hrN = 0;
+  for(const g of games){
+    for(const b of bestBats(g)){
+      n++;
+      if(b.pHit != null){ hit += b.pHit; hitN++; }
+      if(b.pRun != null){ run += b.pRun; runN++; }
+      if(b.tonight != null){ hr += b.tonight; hrN++; }
+    }
+  }
+  return n ? { n, hit, run, hr, hitN, runN, hrN } : null;
+}
+
+function outlookBlock(games){
+  const o = slateOutlook(games);
+  if(!o || !o.hrN) return "";
+  const cell = (v, label, have) => '<div><b>' + (have ? v.toFixed(1) : "\u2014")
+    + '</b><span>' + label + '</span></div>';
+  return '<div class="ledger">'
+    + cell(o.hit, "hits expected", o.hitN)
+    + cell(o.run, "runs expected", o.runN)
+    + cell(o.hr, "homers expected", o.hrN)
+    + '</div>'
+    + '<p class="note">Across the ' + o.n + ' bats named below \u2014 two a club, four a '
+    + 'game. Each figure is the sum of their individual chances, which is the same '
+    + 'quantity the record compares against afterwards, so tonight\u2019s bar and '
+    + 'tomorrow\u2019s result are the same measurement taken twice.</p>';
+}
+
 /* The card, with the number that decides it at the top rather than the bottom. */
 function parlayBlock(){
   const today = iso(new Date());
@@ -6067,6 +6106,7 @@ function renderPlays(){
   const card = upcoming.length
     ? '<h2 class="eyebrow">Today\'s card \u00b7 ' + upcoming.length + ' games</h2>'
       + (waiting ? '<p class="load">Loading starters\u2026</p>' : "")
+      + outlookBlock(upcoming)
       + upcoming.map(cardBlock).join("")
       + '<p class="note"><b>Test these before trusting them.</b> The calibration on the '
       + 'Odds tab replays the side model over every completed game this season; when I ran '
