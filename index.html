@@ -121,7 +121,7 @@ ul{margin:0;padding:0;list-style:none;}
      standings row stretched to 1,140px leaves the club name marooned from its
      numbers, so tables keep a readable width and centre themselves. */
   .dblock,.method,.thead,.trow,.pthead,.prow,.othead,.orow,.follow,.since,
-  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk,.cdio{
+  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk,.cdio,.leadgrp{
     max-width:740px;margin-left:auto;margin-right:auto;}
 }
 @media(min-width:1600px){
@@ -345,6 +345,27 @@ ul{margin:0;padding:0;list-style:none;}
 .minibar i{display:block;height:100%;border-radius:2px;}
 .pctcell em{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--slate);
   width:22px;text-align:right;}
+/* The leaderboard: one card per club, three bats each, three small bars apiece.
+   Named-bat colour comes from col(teamId) on the header bar only; the three
+   in-row bars use fixed tones (hit/run/homer) so the same stat reads the same
+   colour from club to club, which matters more here than the club identity does. */
+.leadgrp{background:var(--deep);border:1px solid var(--line);border-radius:5px;
+  padding:11px 13px 9px;margin-top:10px;}
+.leadhead{display:flex;align-items:baseline;gap:8px;padding-bottom:7px;
+  margin-bottom:7px;border-bottom:1px solid var(--line);}
+.leadhead b{font-family:var(--display);font-size:15px;letter-spacing:.03em;}
+.leadhead em{font-style:normal;font-size:11px;color:var(--slate);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.leadrow{display:flex;align-items:center;gap:10px;padding:6px 0;}
+.leadrow + .leadrow{border-top:1px solid rgba(34,67,74,.5);}
+.leadname{width:76px;flex:0 0 auto;font-size:12.5px;color:var(--chalk);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.leadbars{flex:1;display:flex;flex-direction:column;gap:3px;min-width:0;}
+.leadbar{display:grid;grid-template-columns:16px 1fr 32px;gap:6px;align-items:center;}
+.leadlbl{font-family:var(--mono);font-size:8px;letter-spacing:.06em;color:#738E93;}
+.leadtrack{height:5px;background:#0B1618;border-radius:3px;overflow:hidden;}
+.leadtrack i{display:block;height:100%;border-radius:3px;}
+.leadpct{font-family:var(--mono);font-size:10px;color:var(--slate);text-align:right;}
 .cutline{display:flex;align-items:center;gap:9px;padding:8px;}
 .cutline::before,.cutline::after{content:"";flex:1;height:1px;
   background:repeating-linear-gradient(90deg,var(--chalk) 0 5px,transparent 5px 11px);opacity:.45;}
@@ -571,7 +592,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "108 — tonight\u2019s expected hits, runs and homers, up front";
+const BUILD = "111 — the feed knows when a move touches tonight\u2019s card";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -658,9 +679,9 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, bpLgHr9:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, bpLgHr9:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
-  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false, park:null,
+  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, leadOpen:false, feedTradeSeen:null, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false, park:null,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
 };
 
@@ -1996,63 +2017,105 @@ function leagueHr9(){
   return ip > 0 ? 9 * hr / ip : null;
 }
 
+/* Every rated bat on a club, ranked and fully scored — home run, hit and run
+   chances alike — against the arm the club actually faces tonight. bestBats and
+   benchBats both slice this same list rather than each computing their own, so
+   the two can never quietly disagree about who is better than whom. */
+function rankedBats(g, batTeam, oppPid, oppTeam, cond){
+  const p = S.pitchers[oppPid];
+  /* The opposing starter's HR/9 multiplies every bat in that lineup by the
+     same amount, so it has no say in which one is named — only in how likely
+     he is to go deep. A probable who has not been posted therefore cost the
+     whole club its pick for no reason: a lineup facing an unnamed arm still
+     has a most dangerous bat. The league's starters stand in until the real
+     one is announced, and the row says as much. */
+  const known = !!(p && p.hr9 != null);
+  const spHr9 = known ? p.hr9 : leagueHr9();
+  /* What he will actually see tonight: this starter, plus the relief behind
+     him. Relief is a season figure and the same every night, which is exactly
+     why it belongs here — it is information about the opponent the batter's own
+     rate knows nothing about. */
+  const hr9 = facedHr9(spHr9, oppTeam);
+  const penHr9 = (S.bullpens[oppTeam] || {}).hr9;
+  /* An array, not null. A caller once filtered this for truthiness and threw on
+     the first cold open, before any pitcher or bullpen had loaded — see the
+     build note that fixed it. Kept empty rather than null so every caller can
+     concatenate without checking. */
+  if(hr9 == null) return [];
+  /* Once MLB posts the lineup, only men actually in it are eligible. Before
+     that the pick is made blind, as it always was, and says so. */
+  const lu = lineupIds(g, batTeam);
+  /* The whole pool, not the first eight of it. The stored array is ordered by
+     home run total for the display above; slicing it here threw away exactly
+     the high-rate bats the union was widened to include. */
+  const pool = (S.hitters[batTeam] || [])
+    .filter(b => !lu || lu.indexOf(b.id) >= 0);
+  const ranked = [];
+  for(const b of pool){
+    if(!b.perPA) continue;
+    const r = watchRate(b);
+    const side = S.bats[b.id] || null;
+    const hand = known ? p.hand : null;
+    const plat = platoonMult(side, hand);
+    const platC = platoonMult(side, hand, CONTACT_PLATOON);
+    ranked.push({ score:r.rate * plat * hr9, batter:b.name, batterId:b.id, team:batTeam,
+                  perPA:b.perPA, hr:b.hr,
+                  hRate:b.pa > 0 ? (b.h || 0) / b.pa : 0,
+                  rRate:b.pa > 0 ? (b.r || 0) / b.pa : 0, platC,
+                  pitcher:known ? p.name : null,
+                  hr9, spHr9, penHr9, plat, side, hand,
+                  tba:!known, posted:!!lu, blended:r.rate, form:r.form });
+  }
+  if(!ranked.length) return [];
+  ranked.sort((a, b) => b.score - a.score);
+  /* The arm belongs in the number, not only in the ranking. HR/9 decided which
+     bat was named and then played no part in how likely he was to go deep, so
+     a hitter facing a homer-prone starter and one facing a groundballer were
+     graded against the same expectation. Measured against the league rather
+     than used raw, and damped, because a starter's HR/9 carries his park and
+     his defence inside it. */
+  const lg = leagueFacedHr9();
+  const armMult = lg && lg > 0
+    ? Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, hr9 / lg)) : 1;
+  /* A hit is a different question from a home run, so it answers to a
+     different arm figure: the opposing starter's opponent average rather than
+     his HR/9, measured against the league the same damped way. Runs are
+     different again — a batter scores when his club scores, so his rate is
+     scaled by what the run projection expects of that club tonight against
+     what it usually manages. Both are measured; neither invents a weight. */
+  const lgAvg = leagueOppAvg();
+  const oppAvg = known && p.oppAvg != null ? parseFloat(p.oppAvg) : null;
+  const hitMult = (lgAvg && oppAvg) ?
+    Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, oppAvg / lgAvg)) : 1;
+  const tot = projectTotal(g);
+  const own = S.runs[batTeam];
+  const runMult = (tot && own && own.g > 0) ? (() => {
+    const tonight = batTeam === g.hid ? tot.home : tot.away;
+    const usual = own.rs / own.g;
+    return usual > 0
+      ? Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, tonight / usual)) : 1;
+  })() : 1;
+
+  return ranked.map(chosen => {
+    const mult = (cond ? cond.mult : 1) * armMult * (chosen.plat || 1);
+    return Object.assign(chosen, { cond, armMult,
+      adjusted:chosen.blended * mult,
+      raw:gameProb(chosen.blended * mult),
+      tonight:calibrateBat(gameProb(chosen.blended * mult)),
+      /* Both scaled by the platoon edge as well, since handedness bears on
+         contact as much as on power. */
+      pHit:calibrateMarket("hit",
+        gameProb(chosen.hRate * hitMult * (chosen.platC || 1))),
+      pRun:calibrateMarket("run",
+        gameProb(chosen.rRate * runMult * (chosen.platC || 1))) });
+  });
+}
+
 function bestBats(g){
   const n = matchupIndex(g);
-  /* Common to the whole ballpark, so this does not change which bat is picked
-     within a game — both clubs stand in the same air. What it changes is how
-     likely the pick is to pay off, and so the bar the record grades it against:
-     a bat at Coors with the wind out is not the same bet as the same bat in a
-     San Francisco marine layer, and scoring them against one number was wrong. */
   const cond = hrConditions(g);
-  const forClub = (batTeam, oppPid, oppTeam) => {
-    const p = S.pitchers[oppPid];
-    /* The opposing starter's HR/9 multiplies every bat in that lineup by the
-       same amount, so it has no say in which one is named — only in how likely
-       he is to go deep. A probable who has not been posted therefore cost the
-       whole club its pick for no reason: a lineup facing an unnamed arm still
-       has a most dangerous bat. The league's starters stand in until the real
-       one is announced, and the row says as much. */
-    const known = !!(p && p.hr9 != null);
-    const spHr9 = known ? p.hr9 : leagueHr9();
-    /* What he will actually see tonight: this starter, plus the relief behind
-       him. Relief is a season figure and the same every night, which is exactly
-       why it belongs here — it is information about the opponent the batter's own
-       rate knows nothing about. */
-    const hr9 = facedHr9(spHr9, oppTeam);
-    const penHr9 = (S.bullpens[oppTeam] || {}).hr9;
-    /* An array, not null. forClub used to return a single pick or null and the
-       caller filtered; it now returns a list and the caller concatenates, and
-       this exit was missed in that change — so on the first open of the Plays
-       tab, before any pitcher or bullpen had loaded, bestBats threw on
-       null.concat and took the whole render with it. The tab could not be
-       opened at all, because S.tab was set before the render that failed. */
-    if(hr9 == null) return [];
-    /* Once MLB posts the lineup, only men actually in it are eligible. Before
-       that the pick is made blind, as it always was, and says so. */
-    const lu = lineupIds(g, batTeam);
-    /* The whole pool, not the first eight of it. The stored array is ordered by
-       home run total for the display above; slicing it here threw away exactly
-       the high-rate bats the union was widened to include. */
-    const pool = (S.hitters[batTeam] || [])
-      .filter(b => !lu || lu.indexOf(b.id) >= 0);
-    const ranked = [];
-    for(const b of pool){
-      if(!b.perPA) continue;
-      const r = watchRate(b);
-      const side = S.bats[b.id] || null;
-      const hand = known ? p.hand : null;
-      const plat = platoonMult(side, hand);
-      const platC = platoonMult(side, hand, CONTACT_PLATOON);
-      ranked.push({ score:r.rate * plat * hr9, batter:b.name, batterId:b.id, team:batTeam,
-                    perPA:b.perPA, hr:b.hr,
-                    hRate:b.pa > 0 ? (b.h || 0) / b.pa : 0,
-                    rRate:b.pa > 0 ? (b.r || 0) / b.pa : 0, platC,
-                    pitcher:known ? p.name : null,
-                    hr9, spHr9, penHr9, plat, side, hand,
-                    tba:!known, posted:!!lu, blended:r.rate, form:r.form });
-    }
-    if(!ranked.length) return [];
-    ranked.sort((a, b) => b.score - a.score);
+  const pick = (batTeam, oppPid, oppTeam) => {
+    const all = rankedBats(g, batTeam, oppPid, oppTeam, cond);
     /* Two per club, four per game. The best bat on a side barely moves from one
        night to the next — he is the best bat, and saying otherwise would be
        naming someone less likely — but the runner-up moves a great deal, so a
@@ -2062,58 +2125,35 @@ function bestBats(g){
        have kept the tally continuous at the cost of putting something on screen
        that nothing verifies, and that is not how the rest of this works. */
     const start = n * WATCH_PER_CLUB;
-    let picks = ranked.slice(start, start + WATCH_PER_CLUB);
+    let picks = all.slice(start, start + WATCH_PER_CLUB);
     /* Second game of a doubleheader with a short list: rather than no pick, fall
        back to the tail of it. */
-    if(!picks.length) picks = ranked.slice(-WATCH_PER_CLUB);
-    /* The arm belongs in the number, not only in the ranking. HR/9 decided which
-       bat was named and then played no part in how likely he was to go deep, so
-       a hitter facing a homer-prone starter and one facing a groundballer were
-       graded against the same expectation. Measured against the league rather
-       than used raw, and damped, because a starter's HR/9 carries his park and
-       his defence inside it. */
-    const lg = leagueFacedHr9();
-    const armMult = lg && lg > 0
-      ? Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, hr9 / lg)) : 1;
-    /* A hit is a different question from a home run, so it answers to a
-       different arm figure: the opposing starter's opponent average rather than
-       his HR/9, measured against the league the same damped way. Runs are
-       different again — a batter scores when his club scores, so his rate is
-       scaled by what the run projection expects of that club tonight against
-       what it usually manages. Both are measured; neither invents a weight. */
-    const lgAvg = leagueOppAvg();
-    const oppAvg = known && p.oppAvg != null ? parseFloat(p.oppAvg) : null;
-    const hitMult = (lgAvg && oppAvg) ?
-      Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, oppAvg / lgAvg)) : 1;
-    const tot = projectTotal(g);
-    const own = S.runs[batTeam];
-    const runMult = (tot && own && own.g > 0) ? (() => {
-      const tonight = batTeam === g.hid ? tot.home : tot.away;
-      const usual = own.rs / own.g;
-      return usual > 0
-        ? Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, tonight / usual)) : 1;
-    })() : 1;
-
-    return picks.map((chosen, i) => {
-      const mult = (cond ? cond.mult : 1) * armMult * (chosen.plat || 1);
-      return Object.assign(chosen, { cond, armMult,
-        adjusted:chosen.blended * mult,
-        raw:gameProb(chosen.blended * mult),
-        tonight:calibrateBat(gameProb(chosen.blended * mult)),
-        /* Both scaled by the platoon edge as well, since handedness bears on
-           contact as much as on power. */
-        pHit:calibrateMarket("hit",
-          gameProb(chosen.hRate * hitMult * (chosen.platC || 1))),
-        pRun:calibrateMarket("run",
-          gameProb(chosen.rRate * runMult * (chosen.platC || 1))),
-        /* Only a doubleheader's later game is "next best"; the second pick of a
-           pair is not, and its own percentage says where it stands. */
-        rank:start > 0 ? start + i : 0 });
-    });
+    if(!picks.length) picks = all.slice(-WATCH_PER_CLUB);
+    /* Only a doubleheader's later game is "next best"; the second pick of a
+       pair is not, and its own percentage says where it stands. */
+    return picks.map((chosen, i) =>
+      Object.assign(chosen, { rank:start > 0 ? start + i : 0 }));
   };
   // Visitors bat against the home starter and the home relief, and the reverse.
-  return forClub(g.aid, g.hProbId, g.hid)
-    .concat(forClub(g.hid, g.aProbId, g.aid));
+  return pick(g.aid, g.hProbId, g.hid).concat(pick(g.hid, g.aProbId, g.aid));
+}
+
+/* Three more per club, for the leaderboard rather than the card. Same ranking,
+   same multipliers, the next slice down — never the two already named as Watch
+   picks, so nothing here can duplicate a pick already being graded. Nothing
+   returned by this is recorded or settled: it is a look at the rest of the
+   lineup, not a claim being tracked. */
+const BENCH_PER_CLUB = 3;
+
+function benchBats(g){
+  const n = matchupIndex(g);
+  const cond = hrConditions(g);
+  const pick = (batTeam, oppPid, oppTeam) => {
+    const all = rankedBats(g, batTeam, oppPid, oppTeam, cond);
+    const start = n * WATCH_PER_CLUB + WATCH_PER_CLUB;
+    return all.slice(start, start + BENCH_PER_CLUB);
+  };
+  return pick(g.aid, g.hProbId, g.hid).concat(pick(g.hid, g.aProbId, g.aid));
 }
 
 /* A rate per plate appearance is not a chance of a home run tonight, and the
@@ -2462,6 +2502,9 @@ async function loadFeed(){
       team:T[tid] ? tid : null,
       from:((t.fromTeam || {}).id) || null,
       person:(t.person || {}).fullName || null,
+      /* The id, not just the name. Matching a transaction to a pick by name is
+         a guess; matching by id is not. */
+      pid:((t.person || {}).id) || null,
       desc:trimClub(t.description, T[tid] ? tid : null),
       kind:feedKind(t)
     });
@@ -2472,13 +2515,68 @@ async function loadFeed(){
   const seen = {}, merged = [];
   for(const e of out){
     const key = e.date + "|" + e.desc;
-    if(seen[key]){ seen[key].also = (seen[key].also || 0) + 1; continue; }
+    if(seen[key]){
+      seen[key].also = (seen[key].also || 0) + 1;
+      /* A five-for-one collapses to one row, but all five ids are kept so the
+         row can still be matched against tonight's picks. */
+      if(e.pid) (seen[key].pids = seen[key].pids || []).push(e.pid);
+      continue;
+    }
     seen[key] = e;
     merged.push(e);
   }
   // Newest first; MLB returns them oldest first.
   merged.sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
   return merged;
+}
+
+/* Every player the app is currently naming, and in what capacity.
+
+   The Feed has been a well-made news reader sitting beside an app that never
+   read it. A ten-day injured-list placement is ordinary news until the man is
+   one of tonight's four Watch picks, at which point it is the most important
+   thing on the screen — and nothing said so.
+
+   Built from what is already in memory, so it costs nothing. Degrades to an
+   empty set before the hitters have loaded, which is the state the Feed tab is
+   usually in if it is opened first. */
+function namedPlayers(){
+  const out = {};
+  const today = iso(new Date());
+  for(const g of S.games){
+    if(g.date !== today) continue;
+    if(g.hProbId) out[g.hProbId] = "starting tonight";
+    if(g.aProbId) out[g.aProbId] = "starting tonight";
+    if(g.st !== "sched") continue;
+    for(const b of benchBats(g)) if(b.batterId) out[b.batterId] = "on the leaderboard";
+    /* After the leaderboard, so a named pick overwrites the weaker label. */
+    for(const b of bestBats(g)) if(b.batterId) out[b.batterId] = "named tonight";
+  }
+  return out;
+}
+
+/* A trade in the feed is better evidence than a clock.
+
+   Roster data expires after three hours or a change of date, which bounds how
+   stale it can get but still let a trade sit unreflected on the Plays tab for
+   most of an afternoon. The Feed refreshes every ten minutes and knows about the
+   move long before the clock does, so a trade it has not seen before expires the
+   roster cache immediately.
+
+   Not on the first read of a session: there is nothing to compare against then,
+   and expiring on every cold start would refetch the heaviest data in the app
+   for no reason. */
+function tradeForcesRefresh(){
+  const recent = iso(shift(-1));
+  const trades = S.feed.filter(e => e.kind.tag === "trade" && e.date >= recent);
+  if(!trades.length) return false;
+  const newest = String(trades[0].id || (trades[0].date + trades[0].desc));
+  if(S.feedTradeSeen === newest) return false;
+  const first = S.feedTradeSeen == null;
+  S.feedTradeSeen = newest;
+  if(first || S.detailState !== "ready") return false;
+  S.detailForce = true;    // detailStale() now reads true; loadDetail refetches
+  return true;
 }
 
 /* Refetched when the tab is opened and the last read is more than ten minutes
@@ -2493,6 +2591,7 @@ async function ensureFeed(){
   if(fresh.length || !S.feed.length) S.feed = fresh;   // keep the old list if a refresh fails
   S.feedAt = Date.now();
   S.feedState = "ready";
+  if(tradeForcesRefresh()) loadDetail();
   S.diag.feed = S.feed.length;
   render();
 }
@@ -2795,7 +2894,12 @@ async function ensureSeason(){
 const DETAIL_TTL = 3 * 60 * 60 * 1000;
 
 function detailStale(){
-  if(S.detailState !== "ready" || !S.detailAt) return false;
+  if(S.detailState !== "ready") return false;
+  /* An explicit flag, not a zeroed timestamp. Setting detailAt to 0 to force a
+     refresh looked like it worked and did nothing, because the guard below
+     treats 0 as "never loaded" and returns false. */
+  if(S.detailForce) return true;
+  if(!S.detailAt) return false;
   if(S.detailDay && S.detailDay !== iso(new Date())) return true;
   return Date.now() - S.detailAt > DETAIL_TTL;
 }
@@ -2852,6 +2956,7 @@ async function loadDetail(){
     S.detailState = "ready";
     S.detailAt = Date.now();
     S.detailDay = iso(new Date());
+    S.detailForce = false;
   }catch(e){
     // Never leave a card stuck on "loading" because one call blew up.
     S.detailState = "error";
@@ -3600,6 +3705,53 @@ function weatherStrip(g){
     + '</div>';
 }
 
+/* ---------------- pitcher style, as a read rather than a forecast ----------------
+   The honest version of "pitch mix matchup" needs pitch-by-pitch tracking data —
+   which pitch, how often, what the batter does against each one. That lives only
+   on Baseball Savant, which publishes no public API: no documented endpoints, no
+   keyless access, nothing this app could fetch the way it fetches everything else.
+   Third-party scrapers exist behind paid tokens, which would mean adding a paid
+   dependency to an app that has had none.
+
+   So this is not pitch mix. It is a coarser, honest substitute built from three
+   numbers already on file for every starter — K/9, BB/9, innings per start — read
+   against the league average of starters currently loaded. A high-K9, low-BB9 arm
+   misses bats and works ahead; a low-K9, high-BB9 arm survives on weaker contact
+   and deeper counts. That much is real and already fetched.
+
+   It is deliberately descriptive, not another multiplier. K/9 already drives the
+   strikeout projection directly, and HR/9 and opponent average already drive the
+   home run and hit chances directly — folding a K9-derived "archetype" into those
+   probabilities as well would count the same fact twice under two names. This
+   reads the same way "Power on show" does: a fact about what has already
+   happened, not a forecast, and not fed into any number elsewhere in the app. */
+function leagueStarterRates(){
+  let k = 0, bb = 0, n = 0;
+  for(const key in S.pitchers){
+    const p = S.pitchers[key];
+    if(!p || p.gs == null || p.gs < 3 || p.k9 == null || p.bb9 == null) continue;
+    k += p.k9; bb += p.bb9; n++;
+  }
+  return n >= 8 ? { k9:k / n, bb9:bb / n } : null;
+}
+
+function pitcherArchetype(p){
+  if(!p || p.k9 == null || p.bb9 == null || !p.ip || !p.gs || p.gs < 3) return null;
+  const lg = leagueStarterRates();
+  if(!lg) return null;
+  const ipStart = p.ip / p.gs;
+  if(ipStart < 2) return null;
+  const kd = p.k9 - lg.k9, bd = p.bb9 - lg.bb9;
+  const bits = [];
+  if(kd >= 1.2) bits.push("swing-and-miss stuff");
+  else if(kd <= -1.2) bits.push("pitches to contact");
+  if(bd >= 1.0) bits.push("below-average control");
+  else if(bd <= -1.0) bits.push("sharp control");
+  if(ipStart >= 6.3) bits.push("typically goes deep");
+  else if(ipStart <= 5.0) bits.push("typically short outings");
+  return bits.length ? bits : null;
+}
+
 function pill(label, val, dp, hot){
   if(val == null || isNaN(val)) return "";
   return '<span class="pill' + (hot ? " hot" : "") + '"><b>'
@@ -3626,12 +3778,16 @@ function pitcherLine(teamId, pid, fallbackName){
       + '<b>' + f.era.toFixed(2) + '</b> ERA · ' + ipText(f.ip) + ' IP · '
       + f.k + ' K · ' + f.bb + ' BB · ' + f.hr + ' HR</div>'
     : "";
+  const style = pitcherArchetype(p);
+  const styleLine = style
+    ? '<div class="formline sub"><em>reads as</em>' + esc(style.join(" · ")) + '</div>'
+    : "";
   return '<div class="pline">'
     + '<span class="tbar" style="background:' + col(teamId) + '" aria-hidden="true"></span>'
     + '<span class="pname">' + esc(name) + '<em>' + bits.join(" · ") + '</em></span>'
     + '<span class="prec">' + (p && p.w != null ? p.w + "–" + p.l : "") + '</span></div>'
     + '<div class="pills">' + (stats || '<span class="pill">no season line yet</span>') + '</div>'
-    + formLine;
+    + formLine + styleLine;
 }
 
 function starters(g){
@@ -4058,6 +4214,16 @@ function renderToday(){
     + 'thinner air lifts a home run rate, and how much a wind blowing out does. Both are '
     + 'stated in the source, both are damped, and neither has been tested against a '
     + 'result. Treat the percentage as the app showing its working, not as a price.</p>'
+    + '<p class="note">A starter\'s line can carry a "reads as" tag \u2014 swing-and-miss '
+    + 'stuff, sharp control, typically goes deep \u2014 built from his K/9, BB/9 and '
+    + 'innings per start against the league average of starters currently loaded. This is '
+    + 'not a pitch-mix matchup: that needs pitch-by-pitch tracking data that only Baseball '
+    + 'Savant carries, and Savant publishes no public API this app could fetch the honest '
+    + 'way, keyless and without a paid dependency. The tag is a coarser substitute, and '
+    + 'deliberately descriptive \u2014 it plays no part in any probability on the card. '
+    + 'K/9 already sets the strikeout projection directly and HR/9 and opponent average '
+    + 'already set the home run and hit chances directly; folding the same numbers into '
+    + 'the picks a second time under a different name would count them twice.</p>'
     + '<p class="note">Where MLB has posted the lineup \u2014 usually a few hours before '
     + 'first pitch \u2014 only men actually in it are eligible for the bat pick, and the '
     + 'row says so. Before that the pick is made blind from the club\u2019s leading power '
@@ -4974,6 +5140,15 @@ function renderFeed(){
   const list = S.feedMine ? S.feed.filter(mine) : S.feed;
   const mineCount = S.feed.filter(mine).length;
 
+  /* Which of these moves touch a player the app is naming tonight. */
+  const named = namedPlayers();
+  const touches = e => {
+    const ids = [e.pid].concat(e.pids || []).filter(Boolean);
+    for(const id of ids) if(named[id]) return named[id];
+    return null;
+  };
+  const hitList = S.feed.filter(touches);
+
   const byDay = [];
   for(const e of list){
     const last = byDay[byDay.length - 1];
@@ -5016,13 +5191,26 @@ function renderFeed(){
               + (il ? '<span class="chip slate">' + il + '</span>' : "")
               + (e.also ? '<span class="chip slate">' + (e.also + 1)
                   + ' players</span>' : "")
+              + (touches(e) ? '<span class="chip bulb">' + esc(touches(e))
+                  + '</span>' : "")
             + '</div>'
             + '<p class="fdesc">' + esc(e.desc) + '</p>'
           + '</div>'
           + '</article>';
       }).join("");
 
+  /* Only worth saying when there is something to say. */
+  const alert = hitList.length
+    ? '<div class="since"><h5 class="sincehead">Touching tonight\u2019s card</h5>'
+      + hitList.slice(0, 4).map(e => '<p><b>' + esc(lastName(e.person || "")) + '</b> '
+          + esc(e.kind.tag) + ' \u00b7 ' + esc(touches(e)) + '</p>').join("")
+      + (hitList.length > 4
+          ? '<p class="sincefoot">and ' + (hitList.length - 4) + ' more below</p>' : "")
+      + '</div>'
+    : "";
+
   return '<div class="pane">'
+    + alert
     + (S.follow && mineCount
         ? '<div class="toggle" role="tablist">'
           + '<button role="tab" aria-selected="' + (!S.feedMine) + '" class="'
@@ -5046,6 +5234,14 @@ function renderFeed(){
               : "")
         : '<div class="empty"><h3>Nothing for ' + ab(S.follow) + '</h3>'
           + '<p>No moves involving them in the last ' + FEED_DAYS + ' days.</p></div>')
+    + '<p class="note">A move is flagged when it touches a player the app is naming on '
+    + 'tonight\'s card \u2014 a Watch pick, a bat on the leaderboard, or a probable '
+    + 'starter. Matched by player id rather than by name, so it cannot catch the wrong '
+    + 'man. Nothing appears here if the Plays tab has not loaded its hitters yet.</p>'
+    + '<p class="note">A trade the feed has not seen before also expires the roster data '
+    + 'immediately, rather than waiting out its three-hour clock. That is the gap that '
+    + 'once left a traded player listed under his old club on the Plays tab while this '
+    + 'tab was already reporting the deal.</p>'
     + '<p class="note">Every line is MLB\'s own wording for a roster move, not a summary '
     + 'written here. Trades, injured-list placements and activations, call-ups, options '
     + 'and releases \u2014 the last ' + FEED_DAYS + ' days. There is no injury reporting '
@@ -5665,6 +5861,56 @@ function outlookBlock(games){
     + 'tomorrow\u2019s result are the same measurement taken twice.</p>';
 }
 
+/* Three more bats per club, beyond the two already named below in the game
+   cards. Grouped by team rather than by game, since the question here is "who
+   else on this roster is worth a look" rather than "what does this matchup say."
+
+   Nothing here is recorded. bestBats feeds the scorecard and the parlay and its
+   picks are graded the next day; this is the opposite of that on purpose — a
+   look at the rest of the lineup, not a claim being tracked, which is why it
+   reads in bars rather than in the tick-or-cross language the record uses. */
+function leaderboardBlock(games){
+  const groups = [];
+  for(const g of games){
+    const byTeam = {};
+    for(const b of benchBats(g)) (byTeam[b.team] = byTeam[b.team] || []).push(b);
+    for(const teamId in byTeam) groups.push({ teamId:Number(teamId), bats:byTeam[teamId] });
+  }
+  if(!groups.length) return "";
+
+  const bar = (label, pct, tone) => '<div class="leadbar">'
+    + '<span class="leadlbl">' + label + '</span>'
+    + '<span class="leadtrack"><i style="width:' + Math.max(2, pct * 100)
+      + '%;background:' + tone + '"></i></span>'
+    + '<span class="leadpct">' + Math.round(pct * 100) + '%</span></div>';
+  const row = b => '<div class="leadrow">'
+    + '<span class="leadname">' + esc(lastName(b.batter)) + '</span>'
+    + '<div class="leadbars">'
+      + bar("H", b.pHit || 0, "var(--grass)")
+      + bar("R", b.pRun || 0, "var(--slate)")
+      + bar("HR", b.tonight || 0, "var(--bulb)")
+    + '</div></div>';
+  const group = gr => '<div class="leadgrp">'
+    + '<div class="leadhead">'
+      + '<span class="tbar" style="background:' + col(gr.teamId) + '" aria-hidden="true"></span>'
+      + '<b>' + ab(gr.teamId) + '</b><em>' + esc(nm(gr.teamId)) + '</em></div>'
+    + gr.bats.map(row).join("")
+    + '</div>';
+
+  return SEAM + '<h2 class="eyebrow">Also worth watching</h2>'
+    + '<button class="disc notes" data-leadmore="1" aria-expanded="'
+      + (S.leadOpen ? "true" : "false") + '">'
+      + '<span>' + groups.length + ' clubs, three bats each, beyond the two named below</span>'
+      + '<i class="chev" aria-hidden="true">' + (S.leadOpen ? "\u25B4" : "\u25BE") + '</i></button>'
+    + (S.leadOpen ? groups.map(group).join("") : "")
+    + (S.leadOpen
+        ? '<p class="note">Same three chances as the named bats \u2014 hit, run, home run, '
+          + 'over a full game \u2014 ranked just below them by the same measure. Not '
+          + 'recorded and not graded: this is the rest of tonight\u2019s lineups, not a '
+          + 'second set of picks.</p>'
+        : "");
+}
+
 /* The card, with the number that decides it at the top rather than the bottom. */
 function parlayBlock(){
   const today = iso(new Date());
@@ -6107,6 +6353,7 @@ function renderPlays(){
     ? '<h2 class="eyebrow">Today\'s card \u00b7 ' + upcoming.length + ' games</h2>'
       + (waiting ? '<p class="load">Loading starters\u2026</p>' : "")
       + outlookBlock(upcoming)
+      + leaderboardBlock(upcoming)
       + upcoming.map(cardBlock).join("")
       + '<p class="note"><b>Test these before trusting them.</b> The calibration on the '
       + 'Odds tab replays the side model over every completed game this season; when I ran '
@@ -6308,6 +6555,8 @@ document.addEventListener("click", e => {
   if(e.target.closest("[data-feedolder]")){ S.feedOlder = !S.feedOlder; render(); return; }
 
   if(e.target.closest("[data-recordolder]")){ S.recordOlder = !S.recordOlder; render(); return; }
+
+  if(e.target.closest("[data-leadmore]")){ S.leadOpen = !S.leadOpen; render(); return; }
 
   const fd = e.target.closest("[data-feed]");
   if(fd){ S.feedMine = fd.dataset.feed === "mine"; render(); return; }
