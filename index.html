@@ -592,7 +592,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "111 — the feed knows when a move touches tonight\u2019s card";
+const BUILD = "112 — both summary ledgers removed; the sentences keep the numbers";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -5824,43 +5824,6 @@ function parlaySummary(rec){
            joint:live.reduce((n, l) => n * l.p, 1) };
 }
 
-/* What tonight's named bats are collectively expected to do, before a pitch is
-   thrown. The same three markets the record grades afterwards, in the same shape:
-   an expectation across every bat on the card, so the slate has a bar to be read
-   against rather than thirty separate percentages to be held in the head.
-
-   Summed probabilities, not a count of likely bats — the expected number of the
-   named bats who get a hit is the sum of their chances, and that is the figure
-   the record's tally is compared with. */
-function slateOutlook(games){
-  let n = 0, hit = 0, run = 0, hr = 0, hitN = 0, runN = 0, hrN = 0;
-  for(const g of games){
-    for(const b of bestBats(g)){
-      n++;
-      if(b.pHit != null){ hit += b.pHit; hitN++; }
-      if(b.pRun != null){ run += b.pRun; runN++; }
-      if(b.tonight != null){ hr += b.tonight; hrN++; }
-    }
-  }
-  return n ? { n, hit, run, hr, hitN, runN, hrN } : null;
-}
-
-function outlookBlock(games){
-  const o = slateOutlook(games);
-  if(!o || !o.hrN) return "";
-  const cell = (v, label, have) => '<div><b>' + (have ? v.toFixed(1) : "\u2014")
-    + '</b><span>' + label + '</span></div>';
-  return '<div class="ledger">'
-    + cell(o.hit, "hits expected", o.hitN)
-    + cell(o.run, "runs expected", o.runN)
-    + cell(o.hr, "homers expected", o.hrN)
-    + '</div>'
-    + '<p class="note">Across the ' + o.n + ' bats named below \u2014 two a club, four a '
-    + 'game. Each figure is the sum of their individual chances, which is the same '
-    + 'quantity the record compares against afterwards, so tonight\u2019s bar and '
-    + 'tomorrow\u2019s result are the same measurement taken twice.</p>';
-}
-
 /* Three more bats per club, beyond the two already named below in the game
    cards. Grouped by team rather than by game, since the question here is "who
    else on this roster is worth a look" rather than "what does this matchup say."
@@ -6090,19 +6053,7 @@ function scorecardBlock(){
       + '<div><b>' + (s.watchN ? s.watchHr + '/' + s.watchN : "\u2014")
         + '</b><span>bats homered</span></div>'
     + '</div>'
-    /* Every bat named is now graded on three counts, not one. Each cell reads
-       "landed of graded", and the sentence below gives each its expectation,
-       because a count without a bar under it says nothing. */
-    + (s.hitN || s.runN
-        ? '<div class="ledger">'
-          + '<div><b>' + (s.hitN ? s.hitGot + '/' + s.hitN : "\u2014")
-            + '</b><span>got a hit</span></div>'
-          + '<div><b>' + (s.runN ? s.runGot + '/' + s.runN : "\u2014")
-            + '</b><span>scored</span></div>'
-          + '<div><b>' + (s.watchExpN ? s.watchHrP + '/' + s.watchExpN : "\u2014")
-            + '</b><span>homered</span></div>'
-          + '</div>'
-        : "")
+
     + '<p class="note cdsum">'
       + (s.n
           ? 'Sides called right ' + Math.round(s.acc * 100) + '% of the time '
@@ -6352,7 +6303,6 @@ function renderPlays(){
   const card = upcoming.length
     ? '<h2 class="eyebrow">Today\'s card \u00b7 ' + upcoming.length + ' games</h2>'
       + (waiting ? '<p class="load">Loading starters\u2026</p>' : "")
-      + outlookBlock(upcoming)
       + leaderboardBlock(upcoming)
       + upcoming.map(cardBlock).join("")
       + '<p class="note"><b>Test these before trusting them.</b> The calibration on the '
