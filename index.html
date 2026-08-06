@@ -592,7 +592,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "112 — both summary ledgers removed; the sentences keep the numbers";
+const BUILD = "114 — the mapping answers to its held-out test; the park term is gone";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -681,7 +681,7 @@ const S = {
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
   bullpens:{}, bpLg:null, bpLgHr9:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
-  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, leadOpen:false, feedTradeSeen:null, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false, park:null,
+  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, leadOpen:false, feedTradeSeen:null, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
 };
 
@@ -1811,9 +1811,12 @@ function projectTotal(g){
   }
   /* Where it is being played. Both sides are scaled by the same factor, since a
      park that suppresses runs suppresses them for whoever is batting. */
-  const park = parkOf(g.hid);
-  expH *= park; expA *= park;
-  /* Then pulled toward the point the season says it is unbiased at. The split
+  /* No park term. Measured twice over 1,346 games and it moved the projection by
+     nothing at all — 3.60 runs off either way, to two decimals. The backtest
+     below still computes the comparison, so if it ever starts to matter the app
+     will say so; it is simply no longer applied to what the cards show.
+
+     Pulled toward the point the season says it is unbiased at. The split
      between the two sides is left alone — only the total's spread was measured,
      so only the total's spread is corrected. */
   const sh = runShrink();
@@ -1828,7 +1831,7 @@ function projectTotal(g){
      never shows parts that fail to add up to the whole. */
   const h1 = Math.round(expH * 10) / 10, a1 = Math.round(expA * 10) / 10;
   return { home:h1, away:a1, total:Math.round((h1 + a1) * 10) / 10, usedSP, lg,
-           park:park === 1 ? null : park, shrunk };
+           shrunk };
 }
 
 /* A starter's strikeout total tonight: his rate per nine, over the innings he
@@ -2874,8 +2877,6 @@ async function ensureSeason(){
   S.runs = season.runs;
   S.finals = season.finals;
   S.remaining = season.remaining;
-  S.park = parkFactors(season.finals);
-  if(S.park) S.diag.parks = Object.keys(S.park.factors).length;
   S.diag.h2h = Object.keys(S.h2h).length;
   S.diag.remaining = season.remaining.length;
   if(season.remaining.length > 100) S.odds = simulate(SIMS);   // now schedule-aware
@@ -4227,11 +4228,7 @@ function renderToday(){
     + '<p class="note">Where MLB has posted the lineup \u2014 usually a few hours before '
     + 'first pitch \u2014 only men actually in it are eligible for the bat pick, and the '
     + 'row says so. Before that the pick is made blind from the club\u2019s leading power '
-    + 'hitters, which is what it always was. The run projection is scaled by the home '
-    + 'park, computed from this season\u2019s own finished games rather than a table of '
-    + 'factors, and regressed by ' + PARK_REGRESS + ' games because eighty home games is '
-    + 'a small sample. The calibration on the Odds tab measures whether that scaling '
-    + 'helps.</p>'
+    + 'hitters, which is what it always was.</p>'
     + '<p class="note">Recent form comes from actual game logs on both sides — a '
     + 'starter\'s last three outings, a hitter\'s last five games. Those are exact, not '
     + 'sampled from a date window. Logs are per player, so a card\'s hitters are fetched '
@@ -4537,10 +4534,22 @@ function calibrateBat(p){
   return isFinite(out) ? out : p;
 }
 
-/* Apply it, when one has been fitted. */
+/* Apply it, when one has been fitted and shown to help.
+
+   It used to apply on the strength of having been fitted at all. Over 1,346
+   games the model improved to the point where there was nothing left to correct
+   — slope 1.08, essentially the identity, with the raw bands already honest at
+   50-55% -> 51% and 55-60% -> 58% — and the held-out test turned against it:
+   0.2440 calibrated against 0.2437 raw. The app was applying a correction its
+   own out-of-sample check rejected.
+
+   So the gate is the held-out result, not the existence of a fit. No held-out
+   result means no mapping either: an untested correction is not better than
+   none, and this is the one place in the app where that had been assumed. */
 function calibrate(p){
   const f = S.calFit;
   if(!f || p == null || !isFinite(p)) return p;
+  if(!S.calOut || !(S.calOut.cal < S.calOut.raw)) return p;
   /* A malformed fit would turn every probability on every card into NaN, so it
      is checked rather than trusted. A non-positive slope would also invert the
      model, which no amount of miscalibration justifies. */
@@ -4701,16 +4710,19 @@ function calibrationBlock(){
           + '<p>' + (() => {
               const d = c.runMAE - c.parkMAE;
               if(Math.abs(d) < 0.01)
-                return 'No measurable difference. Every park factor here is regressed by '
-                  + PARK_REGRESS + ' games of league average, which may simply have damped '
-                  + 'it into irrelevance \u2014 or run scoring may be far more about who is '
-                  + 'batting than where.';
+                return 'No measurable difference \u2014 the same answer twice now, over '
+                  + 'more than a thousand games each time. The term has been taken out of '
+                  + 'the run projection on the strength of it; this comparison stays so '
+                  + 'that if the park ever does start to matter, the app will say so. '
+                  + 'Either the regression of ' + PARK_REGRESS + ' games damped it into '
+                  + 'irrelevance, or run scoring is far more about who is batting than '
+                  + 'where.';
               return d > 0
-                ? 'The park helps, by ' + d.toFixed(2) + ' runs a game. Computed from this '
-                  + 'season\u2019s finals rather than a table of factors, so it costs no '
-                  + 'request and cannot go stale.'
+                ? 'The park helps here, by ' + d.toFixed(2) + ' runs a game \u2014 enough '
+                  + 'to be worth putting back into the projection, which no longer carries '
+                  + 'it.'
                 : '<b>The park makes it worse</b>, by ' + Math.abs(d).toFixed(2)
-                  + ' runs a game. Raise PARK_REGRESS, or take the term out.';
+                  + ' runs a game. It is not applied, so nothing needs changing.';
             })() + '</p>'
         : "")
     + (S.cal.rec && S.cal.pyth
@@ -4738,7 +4750,14 @@ function calibrationBlock(){
         : "")
     + (S.calFit
         ? '<h4 class="swhead">The numbers the cards now show</h4>'
-          + '<p>Every displayed probability is mapped through what actually happened: '
+          + (S.calOut && !(S.calOut.cal < S.calOut.raw)
+              ? '<p><b>The mapping below is fitted but not applied.</b> The held-out test '
+                + 'further down rejected it, and the gate is that test rather than the '
+                + 'existence of a fit \u2014 so the cards are showing the raw model '
+                + 'numbers. It is kept on screen because a later run may reverse this, '
+                + 'and because a correction that stopped being needed is worth seeing.</p>'
+              : "")
+          + '<p>The mapping is: '
           + 'sigmoid(' + S.calFit.a.toFixed(2) + ' \u00d7 logit(p) '
           + (S.calFit.b >= 0 ? '+ ' : '\u2212 ') + Math.abs(S.calFit.b).toFixed(2) + '). '
           + (S.calFit.a < 0.9
@@ -5028,10 +5047,6 @@ function cardBlock(g){
               ? ' \u00b7 give or take ' + S.cal.with.runMAE.toFixed(1)
               : "";
             const cal = tot.shrunk ? ' \u00b7 calibrated' : "";
-            const pk = tot.park && Math.abs(tot.park - 1) >= 0.03
-              ? ' \u00b7 park ' + (tot.park > 1 ? "+" : "")
-                + Math.round((tot.park - 1) * 100) + '%'
-              : "";
             return '<div class="cbrow">'
               + '<span class="cblabel">Runs</span>'
               + '<span class="tbar" aria-hidden="true"></span>'
@@ -5039,7 +5054,7 @@ function cardBlock(g){
                 + esc(word) + '</span>'
               + '<span class="cbodds sm">' + ab(g.aid) + ' ' + tot.away.toFixed(1)
                 + ' \u00b7 ' + ab(g.hid) + ' ' + tot.home.toFixed(1)
-                + esc(pk) + esc(cal) + esc(err) + '</span>'
+                + esc(cal) + esc(err) + '</span>'
               + '</div>';
           })()
         : "")
@@ -5352,8 +5367,12 @@ function scorecardIO(){
    margins, and a run projection is not a spread. Inventing either would be worse
    than their absence. */
 const PARLAY_KEY = "108.parlay";
-const PARLAY_LEGS = 8;
-const MAX_PER_KIND = 2;
+const PARLAY_LEGS = 10;
+/* Four rather than two, because the card now draws on three kinds rather than
+   five: at two apiece a ten-leg card could not be filled without the unlimited
+   pass doing most of the work, which is the collapse into one leg type the cap
+   exists to prevent. */
+const MAX_PER_KIND = 4;
 
 function loadParlay(){
   try{
@@ -5492,31 +5511,6 @@ function runShrink(){
    run projection and nothing in this app should be read as claiming it does. */
 const PARK_REGRESS = 40;
 
-function parkFactors(finals){
-  const at = {};
-  let lgRuns = 0, lgG = 0;
-  for(const f of finals || []){
-    if(!f || f.hs == null || f.as == null) continue;
-    const a = at[f.hid] || (at[f.hid] = { r:0, g:0 });
-    const total = f.hs + f.as;
-    a.r += total; a.g++;
-    lgRuns += total; lgG++;
-  }
-  if(lgG < 200) return null;
-  const lgAvg = lgRuns / lgG;
-  const out = {};
-  for(const k in at){
-    const a = at[k];
-    out[k] = ((a.r + PARK_REGRESS * lgAvg) / (a.g + PARK_REGRESS)) / lgAvg;
-  }
-  return { factors:out, lgAvg, n:lgG };
-}
-
-const parkOf = id => {
-  const p = S.park;
-  return p && p.factors && p.factors[id] != null ? p.factors[id] : 1;
-};
-
 /* Normal CDF, by the usual rational approximation of erf. Needed because the run
    projection's spread is measured rather than assumed — see below. */
 function normCdf(z){
@@ -5583,13 +5577,6 @@ function legsFor(g){
             + (sd ? ", give or take " + sd.toFixed(1) : "") });
   }
 
-  for(const mu of bestBats(g)){
-    if(mu.tonight == null || mu.batterId == null) continue;
-    add({ pk:g.pk, kind:"hr", pid:mu.batterId, team:mu.team, p:mu.tonight,
-          label:lastName(mu.batter) + " home run",
-          detail:"1 per " + Math.round(1 / mu.blended) + " PA" });
-  }
-
   for(const [pid, oppId, ownId] of [[g.aProbId, g.hid, g.aid], [g.hProbId, g.aid, g.hid]]){
     const k = projectStrikeouts(pid, oppId);
     if(!k) continue;
@@ -5604,23 +5591,6 @@ function legsFor(g){
           detail:"projected " + k.exp.toFixed(1) });
   }
 
-  for(const tid of [g.aid, g.hid]){
-    const lu = lineupIds(g, tid);
-    /* The weakest leg in the card was weak mostly because it did not know whether
-       the runner was playing. With a posted lineup it does. */
-    const r = (S.runners[tid] || []).find(x => !lu || lu.indexOf(x.id) >= 0);
-    const games = (S.runs[tid] || {}).g;
-    if(!r || !games) continue;
-    /* Steals per team game, not per game he started, because the app does not
-       know how often he plays. That understates his rate on a night he is in the
-       lineup and overstates the chance he is in it at all. The two pull opposite
-       ways and neither is measured, which is the weakest leg here. */
-    add({ pk:g.pk, kind:"sb", pid:r.id, team:tid,
-          p:1 - Math.exp(-r.sb / games),
-          label:lastName(r.name) + " to steal",
-          detail:r.sb + " in " + games + " games"
-            + (lu ? " \u00b7 starting" : " \u00b7 lineup TBA") });
-  }
   return out;
 }
 
@@ -5957,12 +5927,17 @@ function parlayBlock(){
       + 'not inflated by two legs that would fail for the same reason.</p>'
       + '<p class="note"><b>Read that top figure before anything else.</b> The record on '
       + 'this tab says the side model is behind backing the home team, the run projection '
-      + 'is behind guessing the league average, and bats have homered below their own '
-      + 'expectation. Legs built from those do not become reliable by being multiplied '
-      + 'together \u2014 the product falls faster than any of them improves. There is also '
-      + 'no price here: without a book\u2019s number this cannot tell you a leg is '
-      + 'mispriced, only how likely the app thinks it is. Steal legs are the weakest, '
-      + 'because how often a runner actually starts is not in the data.</p>';
+      + 'is behind guessing the league average. Legs built from those do not become '
+      + 'reliable by being multiplied together \u2014 the product falls faster than any '
+      + 'of them improves. There is also no price here: without a book\u2019s number this '
+      + 'cannot tell you a leg is mispriced, only how likely the app thinks it is.</p>'
+      + '<p class="note">The card is drawn from three kinds now: the side, the run total, '
+      + 'and a starter\u2019s strikeouts. Home run and stolen base legs have been taken '
+      + 'out. Both were the weakest things on it \u2014 the homer picks were running three '
+      + 'sigma under their own expectation, and a steal leg never knew whether the runner '
+      + 'was even starting. Ten legs from three kinds rather than eight from five, so the '
+      + 'card is longer but every leg on it comes from a component that has been measured '
+      + 'against results.</p>';
   }
 
   if(past.length){
