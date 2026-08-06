@@ -592,7 +592,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "114 — the mapping answers to its held-out test; the park term is gone";
+const BUILD = "115 — predictions are recorded on every tab, not just Plays";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -6260,12 +6260,25 @@ function scorecardBlock(){
     + scorecardIO();
 }
 
-function renderPlays(){
+/* Writing down and settling, on every render rather than only the Plays one.
+
+   This used to live inside renderPlays, which meant a prediction was recorded
+   only if that tab happened to be on screen while the game was still scheduled.
+   Anything that started before you opened Plays was never written down — and a
+   game that was never recorded can never settle, so it was simply absent from
+   the record. What got measured depended on which tab you were looking at.
+
+   The rule itself is unchanged: only scheduled games, frozen at first pitch,
+   never revised afterwards. It just no longer depends on tab state. load() runs
+   every thirty seconds while the app is open, so this now runs with it.
+
+   It cannot record anything while the app is closed. If nothing is open before
+   first pitch there is still no prediction, which is correct. */
+function keepTheRecord(){
+  if(S.phase !== "ready" || !S.teams) return;
   const today = iso(new Date());
-  const upcoming = S.games.filter(g => g.date === today && g.st === "sched")
-    .sort((a,b) => new Date(a.start) - new Date(b.start));
-  /* Written down before first pitch, then settled once results arrive. */
-  upcoming.forEach(recordPrediction);
+  S.games.filter(g => g.date === today && g.st === "sched")
+    .forEach(recordPrediction);
   buildParlay(today);
   settleScorecard();
   settleParlay();
@@ -6273,6 +6286,12 @@ function renderPlays(){
   if(S.parlayDirty){ saveParlay(); S.parlayDirty = false; }
   if(S.cardDirty){ saveScorecard(); S.cardDirty = false; }
   settlePicksFromBox();
+}
+
+function renderPlays(){
+  const today = iso(new Date());
+  const upcoming = S.games.filter(g => g.date === today && g.st === "sched")
+    .sort((a,b) => new Date(a.start) - new Date(b.start));
   const waiting = S.detailState === "loading" || !Object.keys(S.pitchers).length;
 
   const card = upcoming.length
@@ -6318,6 +6337,9 @@ function renderPlays(){
 }
 
 function render(resetScroll){
+  /* Before anything is drawn, and on every tab. A prediction that is not written
+     down before first pitch cannot be recovered afterwards. */
+  keepTheRecord();
   const keep = resetScroll ? 0 : window.scrollY;
   const fk = resetScroll ? null : focusKey(document.activeElement);
   const app = document.getElementById("app");
