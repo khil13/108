@@ -592,7 +592,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "115 — predictions are recorded on every tab, not just Plays";
+const BUILD = "118 — a short slate is explored deeper rather than cut short";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -5368,11 +5368,11 @@ function scorecardIO(){
    than their absence. */
 const PARLAY_KEY = "108.parlay";
 const PARLAY_LEGS = 10;
-/* Four rather than two, because the card now draws on three kinds rather than
-   five: at two apiece a ten-leg card could not be filled without the unlimited
-   pass doing most of the work, which is the collapse into one leg type the cap
-   exists to prevent. */
-const MAX_PER_KIND = 4;
+/* Ten legs across five kinds: one of each on the first pass, then up to three
+   apiece. Three still fits — five kinds at three is fifteen, comfortably over ten
+   — so every kind is represented and none can take more than a third of the
+   card. */
+const MAX_PER_KIND = 3;
 
 function loadParlay(){
   try{
@@ -5591,6 +5591,35 @@ function legsFor(g){
           detail:"projected " + k.exp.toFixed(1) });
   }
 
+  /* Home runs, on the calibrated number rather than the raw one. These were
+     taken out when the picks were running three sigma under their own
+     expectation; what fixed that was not removing them but measuring the bias and
+     correcting for it, so mu.tonight is now mapped through the record. */
+  for(const mu of bestBats(g)){
+    if(mu.tonight == null || mu.batterId == null) continue;
+    add({ pk:g.pk, kind:"hr", pid:mu.batterId, team:mu.team, p:mu.tonight,
+          label:lastName(mu.batter) + " home run",
+          detail:"1 per " + Math.round(1 / mu.blended) + " PA" });
+  }
+
+  for(const tid of [g.aid, g.hid]){
+    const lu = lineupIds(g, tid);
+    /* The weakest leg in the card was weak mostly because it did not know whether
+       the runner was playing. With a posted lineup it does. */
+    const r = (S.runners[tid] || []).find(x => !lu || lu.indexOf(x.id) >= 0);
+    const games = (S.runs[tid] || {}).g;
+    if(!r || !games) continue;
+    /* Steals per team game, not per game he started, because the app does not
+       know how often he plays. That understates his rate on a night he is in the
+       lineup and overstates the chance he is in it at all. The two pull opposite
+       ways and neither is measured, which is the weakest leg here. */
+    add({ pk:g.pk, kind:"sb", pid:r.id, team:tid,
+          p:1 - Math.exp(-r.sb / games),
+          label:lastName(r.name) + " to steal",
+          detail:r.sb + " in " + games + " games"
+            + (lu ? " \u00b7 starting" : " \u00b7 lineup TBA") });
+  }
+
   return out;
 }
 
@@ -5628,28 +5657,60 @@ function buildParlay(date){
      dropped home runs entirely, because they are systematically the least. So:
      one of every kind available first, then fill to the cap, then fill regardless.
      A card of one bet repeated eight times tests nothing. */
-  const legs = [], used = {}, byKind = {};
-  const take = limit => {
+  const legs = [], used = {}, byKind = {}, taken = {};
+  /* `limit` caps how many of a kind may be taken; `perGame` how many legs one
+     game may contribute. */
+  const take = (limit, perGame) => {
     for(const leg of all){
       if(legs.length >= PARLAY_LEGS) return;
-      if(used[leg.pk]) continue;
+      if((used[leg.pk] || 0) >= perGame) continue;
+      /* Never the same market twice on the same game: two "under 9.5" legs on
+         one fixture are not two picks, they are one pick written twice. */
+      if(taken[leg.pk + ":" + leg.kind]) continue;
       if(limit != null && (byKind[leg.kind] || 0) >= limit) continue;
-      used[leg.pk] = true;
+      used[leg.pk] = (used[leg.pk] || 0) + 1;
+      taken[leg.pk + ":" + leg.kind] = true;
       byKind[leg.kind] = (byKind[leg.kind] || 0) + 1;
       legs.push(leg);
     }
   };
-  take(1);                 // one of each kind the slate offers
-  take(MAX_PER_KIND);      // then a second of the strongest kinds
-  take(null);              // then whatever is left, if the slate is thin
-  /* Short slate: rather than pad with a second leg from a game already in the
-     card, the card is simply shorter. A correlated leg would flatter the joint
-     number, which is the one thing this must not do. */
+  take(1, 1);              // one of each kind the slate offers, one game apiece
+  /* On a three-game night the pass above runs out of games before it runs out of
+     kinds, and the kinds it drops are always the last two by probability — home
+     runs and steals. So the variety pass gets a second look with the per-game
+     limit lifted, before any kind is allowed a second leg. Breadth of kind
+     first, depth of kind second. */
+  take(1, 3);
+  take(MAX_PER_KIND, 1);   // then more of the strongest kinds, still one apiece
+  take(null, 1);           // then whatever is left across untouched games
+
+  /* Only now, and only if the slate could not fill the card from separate games,
+     does a game get asked for a second leg — then a third.
+
+     This was previously refused outright: a short slate simply produced a short
+     card, on the grounds that two legs from one fixture are not independent and
+     the joint figure would flatter itself. That reasoning still holds, and the
+     block says so where the legs appear. But refusing meant a four-game night
+     produced a four-leg card while the four games had a dozen honest picks in
+     them, and looking harder at fewer games is the better answer than looking at
+     nothing. The correlation is disclosed rather than hidden, and it is the one
+     thing about these legs the joint number cannot capture. */
+  for(let perGame = 2; perGame <= 3 && legs.length < PARLAY_LEGS; perGame++){
+    take(MAX_PER_KIND, perGame);
+    take(null, perGame);
+  }
+
+  /* Which legs ended up sharing a fixture, so the display can mark them. */
+  const perGameCount = {};
+  for(const l of legs) perGameCount[l.pk] = (perGameCount[l.pk] || 0) + 1;
+  for(const l of legs) l.shared = perGameCount[l.pk] > 1 || undefined;
+
   if(legs.length < 3) return existing || null;
   /* Only replaced by something more varied. Once every kind the slate offers is
      represented, the card settles and stops moving. */
   const kinds = ls => new Set(ls.map(l => l.kind)).size;
-  if(existing && kinds(legs) <= kinds(existing.legs)) return existing;
+  if(existing && kinds(legs) <= kinds(existing.legs)
+     && legs.length <= existing.legs.length) return existing;
   const joint = legs.reduce((n, l) => n * l.p, 1);
   const rec = { date, at:new Date().toISOString(), legs, joint, built:legs.length };
   S.parlay[date] = rec;
@@ -5872,7 +5933,7 @@ function parlayBlock(){
     const side = id => leg.team === id ? '<b>' + ab(id) + '</b>' : ab(id);
     const fixture = leg.aid && leg.hid
       ? side(leg.aid) + ' at ' + side(leg.hid) : "";
-    const bits = [fixture, esc(leg.detail),
+    const bits = [fixture, leg.shared ? "shares this game" : "", esc(leg.detail),
                   leg.actual ? esc(leg.actual) : "",
                   leg.hit == null && leg.clear ? "already clear" : "",
                   leg.hit == null && leg.dead ? "already gone" : ""].filter(Boolean);
@@ -5920,6 +5981,17 @@ function parlayBlock(){
       + '</div>'
       + rec.legs.map(legRow).join("")
       + '</div>'
+      + ((rec.legs || []).some(l => l.shared)
+          ? '<p class="note"><b>Some legs share a game.</b> The slate was too short to '
+            + 'fill the card from separate fixtures, so a few games were asked for a '
+            + 'second or third pick rather than the card being cut short. Those legs are '
+            + 'marked. It matters because the figure at the top multiplies them as though '
+            + 'they were independent, and legs on the same game are not: an over and a '
+            + 'home run in the same park rise together, an under and a home run pull '
+            + 'against each other. The error can go either way and this app has no honest '
+            + 'way to size it, so it is disclosed rather than adjusted. Never the same '
+            + 'market twice on one game \u2014 that would be one pick written twice.</p>'
+          : "")
       + '<p class="note">Every leg is the app\u2019s own number, recorded before first '
       + 'pitch and graded below. The figure at the top is their product: the chance all '
       + (s.n === 1 ? "of it lands" : "of them land") + ' together, which is the only '
@@ -5931,13 +6003,19 @@ function parlayBlock(){
       + 'reliable by being multiplied together \u2014 the product falls faster than any '
       + 'of them improves. There is also no price here: without a book\u2019s number this '
       + 'cannot tell you a leg is mispriced, only how likely the app thinks it is.</p>'
-      + '<p class="note">The card is drawn from three kinds now: the side, the run total, '
-      + 'and a starter\u2019s strikeouts. Home run and stolen base legs have been taken '
-      + 'out. Both were the weakest things on it \u2014 the homer picks were running three '
-      + 'sigma under their own expectation, and a steal leg never knew whether the runner '
-      + 'was even starting. Ten legs from three kinds rather than eight from five, so the '
-      + 'card is longer but every leg on it comes from a component that has been measured '
-      + 'against results.</p>';
+      + '<p class="note">Ten legs across five kinds \u2014 the side, the run total, a '
+      + 'starter\u2019s strikeouts, a home run and a steal \u2014 with one of each taken '
+      + 'first and no more than three of any. Home runs and steals were dropped for a '
+      + 'stretch when the homer picks were running three sigma under their own '
+      + 'expectation; what fixed that was not removing them but measuring the bias and '
+      + 'correcting for it, so the homer legs now use the number the record has mapped '
+      + 'rather than the raw one. Steal legs remain the weakest: how often a runner '
+      + 'actually starts is only known once a lineup is posted, and the leg says which '
+      + 'of the two it is.</p>'
+      + '<p class="note">More legs is not more chances \u2014 it is fewer. Every leg added '
+      + 'multiplies the card down, and the ones added last are the least likely, so ten is '
+      + 'a considerably longer shot than eight. The figure at the top is the one that '
+      + 'tracks that, and it is the number to read.</p>';
   }
 
   if(past.length){
