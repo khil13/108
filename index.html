@@ -360,24 +360,76 @@ ul{margin:0;padding:0;list-style:none;}
    The global prefers-reduced-motion rule already stops every animation in the
    app, so a phone set to reduce motion gets the scene holding still with the
    ball at the wall, which still reads as what it is. */
-.moon{display:block;width:100%;height:78px;margin:2px 0 4px;overflow:hidden;}
-.moon .sky{fill:none;}
-.moon .ground{stroke:var(--line);stroke-width:1;}
-.moon .wall{stroke:#22434A;stroke-width:2;stroke-linecap:round;}
-.moon .crowd{fill:#12252A;}
-.moon .bat{stroke:var(--chalk);stroke-width:2.2;stroke-linecap:round;
-  transform-origin:24px 40px;animation:swing 4.2s cubic-bezier(.3,.1,.2,1) infinite;}
+.moon{display:block;width:100%;height:88px;margin:2px 0 4px;overflow:hidden;}
+.moon .ground{stroke:#22434A;stroke-width:1;}
+.moon .dirt{fill:none;stroke:#1B3138;stroke-width:1;}
+.moon .wall{fill:#0E1F24;stroke:#22434A;stroke-width:1;}
+.moon .cap{stroke:var(--bulb);stroke-width:1.4;opacity:.5;stroke-linecap:round;}
+.moon .pole{stroke:var(--bulb);stroke-width:1.2;opacity:.4;stroke-linecap:round;}
+.moon .fan{fill:#2C4C54;}
 .moon .body{fill:#5B7378;}
 .moon .limb{stroke:#5B7378;stroke-width:2.2;stroke-linecap:round;fill:none;}
-/* Trail and ball share one easing and one set of keyframe times, so the ball sits
-   at the head of its own streak instead of outrunning it. The dash length is the
-   measured length of the arc — getTotalLength says 270.4 — and a wrong value here
-   shows as a trail that finishes early or never quite completes. */
-.moon .trail{fill:none;stroke:var(--bulb);stroke-width:1.5;stroke-linecap:round;
-  stroke-dasharray:271;stroke-dashoffset:271;opacity:.5;
-  animation:streak 4.2s cubic-bezier(.22,.62,.4,1) infinite;}
-.moon .ball{fill:var(--chalk);r:3.2;
-  animation:launch 4.2s cubic-bezier(.22,.62,.4,1) infinite;}
+.moon .bat{stroke:var(--chalk);stroke-width:2.2;stroke-linecap:round;
+  transform-origin:26px 43px;animation:swing 4.4s cubic-bezier(.3,.1,.2,1) infinite;}
+/* Two strokes on one path. `arc` draws itself as the ball travels and lingers a
+   moment, so the flight leaves something to read; `comet` is a short dash running
+   the same path at the same speed, which is what gives the ball a tail rather
+   than a diagram. Both share the ball's easing and timings — when these drifted
+   apart the ball outran its own streak, which is the sort of thing only a frame
+   grab catches. 271 is the measured length of the arc; a wrong number here shows
+   as a trail that stops short or never finishes. */
+.moon .arc{fill:none;stroke:var(--bulb);stroke-width:1.2;stroke-linecap:round;
+  stroke-dasharray:271;stroke-dashoffset:271;opacity:0;
+  animation:draw 4.4s cubic-bezier(.22,.62,.4,1) infinite;}
+.moon .comet{fill:none;stroke:var(--bulb);stroke-width:2.2;stroke-linecap:round;
+  stroke-dasharray:22 300;stroke-dashoffset:22;opacity:0;
+  animation:comet 4.4s cubic-bezier(.22,.62,.4,1) infinite;}
+.moon .ball{fill:var(--chalk);r:3.2;opacity:0;
+  animation:launch 4.4s cubic-bezier(.22,.62,.4,1) infinite;}
+/* Where it lands: a ring opening in the seats, the one beat in the loop that is
+   not motion along the arc. */
+.moon .splash{fill:none;stroke:var(--chalk);stroke-width:1.6;opacity:0;
+  transform-origin:296px 31px;animation:splash 4.4s ease-out infinite;}
+@keyframes swing{
+  0%,5%   { transform:rotate(-60deg); }
+  10%     { transform:rotate(36deg); }
+  30%     { transform:rotate(24deg); }
+  55%,100%{ transform:rotate(-60deg); }
+}
+@keyframes launch{
+  0%,8%   { offset-distance:0%;   opacity:0; }
+  9%      { offset-distance:0%;   opacity:1; }
+  56%     { offset-distance:100%; opacity:1; }
+  60%     { offset-distance:100%; opacity:0; }
+  100%    { offset-distance:100%; opacity:0; }
+}
+@keyframes comet{
+  0%,8%   { stroke-dashoffset:22;   opacity:0; }
+  9%      { stroke-dashoffset:22;   opacity:.75; }
+  56%     { stroke-dashoffset:-271; opacity:.75; }
+  62%     { stroke-dashoffset:-271; opacity:0; }
+  100%    { stroke-dashoffset:-271; opacity:0; }
+}
+@keyframes draw{
+  0%,8%   { stroke-dashoffset:271; opacity:0; }
+  9%      { stroke-dashoffset:271; opacity:.28; }
+  56%     { stroke-dashoffset:0;   opacity:.28; }
+  76%     { stroke-dashoffset:0;   opacity:.28; }
+  90%,100%{ stroke-dashoffset:0;   opacity:0; }
+}
+@keyframes splash{
+  0%,56%  { transform:scale(.2); opacity:0; }
+  58%     { transform:scale(.2); opacity:.85; }
+  70%     { transform:scale(1.9); opacity:0; }
+  100%    { transform:scale(1.9); opacity:0; }
+}
+/* Wraps rather than truncating. A clipped name is worse than a two-line caption,
+   and at 320px "yesterday's best line" plus a name plus a batting line plus a
+   club does not fit on one. */
+.moonwho{font-family:var(--mono);font-size:10px;color:#738E93;text-align:center;
+  margin:-2px 0 10px;line-height:1.5;}
+.moonwho span{color:var(--bulb);letter-spacing:.05em;text-transform:uppercase;
+  font-size:8.5px;margin-right:7px;}
 @keyframes swing{
   0%,6%   { transform:rotate(-58deg); }
   11%     { transform:rotate(34deg); }
@@ -667,7 +719,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "125 — a ball leaving the park, at the top of the Plays tab";
+const BUILD = "130 — a ballpark, a comet trail and a landing in the seats";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -756,7 +808,7 @@ const S = {
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
   bullpens:{}, bpLg:null, bpLgHr9:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
-  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, leadOpen:false, feedTradeSeen:null, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false,
+  odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, leadOpen:false, feedTradeSeen:null, star:null, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
 };
 
@@ -1732,6 +1784,7 @@ async function settlePicksFromBox(){
        is absent from the game rather than unreachable. */
     e.boxTries = BOX_TRIES;
     const box = readBoxscore(j);
+    if(noteStar(key, e.date, box, { home:e.hid, away:e.aid })) changed = true;
     if(settleParlayFromBox(key, box)) changed = true;
     for(const w of watchList(e)){
       if(w.id == null || w.result || w.dnp) continue;
@@ -3115,10 +3168,12 @@ function readBoxscore(j){
       const p = side.players[key];
       const id = (p.person || {}).id;
       if(!id) continue;
+      const name = (p.person || {}).fullName || null;
       const sb = (p.seasonStats || {}).batting || {};
       const tb = (p.stats || {}).batting || {};
       const tp = (p.stats || {}).pitching || {};
       out[id] = {
+        name, side:sideKey,
         avg:sb.avg && sb.avg !== "-" ? sb.avg : null,
         hr:sb.homeRuns != null ? sb.homeRuns : null,
         ops:sb.ops && sb.ops !== "-" ? sb.ops : null,
@@ -5698,7 +5753,6 @@ function legsFor(g){
     if(mu.tonight == null || mu.batterId == null) continue;
     add({ pk:g.pk, kind:"hr", pid:mu.batterId, team:mu.team, p:mu.tonight,
           pa:mu.pa, posted:mu.posted, tba:mu.tba,
-          moved:mu.raw > 0 ? Math.abs(mu.raw - mu.tonight) / mu.raw : null,
           label:lastName(mu.batter) + " home run",
           detail:"1 per " + Math.round(1 / mu.blended) + " PA" });
   }
@@ -5993,9 +6047,6 @@ function parlaySummary(rec){
                         evidence than one with six hundred
      the lineup         posted, or the pick made blind hours early
      the starter        confirmed, or a league-average stand-in filling in
-     the correction     how far the record had to move the raw number, since a
-                        number that needed a large correction is a number the app
-                        was recently wrong about
 
    Each is a deduction from a full mark, so the letter has an arithmetic behind it
    and a one-line reason that names whichever deduction was largest. */
@@ -6028,8 +6079,13 @@ function evidence(o){
      now a small bonus in effect rather than its absence being a large penalty. */
   if(o.posted === false) hit(0.3, "the lineup is not posted yet");
   if(o.tba === true) hit(1.0, "the opposing starter has not been named");
-  if(o.moved != null) hit(o.moved >= 0.35 ? 1.0 : o.moved >= 0.15 ? 0.5 : 0,
-    "the record moved this number by " + Math.round(o.moved * 100) + "%");
+  /* There was a penalty here for how far the calibration moved the raw number.
+     It looked like per-pick information and was not: the mapping is a single
+     curve fitted to the whole component, so it moves every homer pick by 30 to 40
+     per cent, and the only variation is with the probability itself — which is
+     printed beside the letter already. Two picks at 28% and 32% were drawing
+     different letters purely from where that near-constant landed against a
+     threshold. The component's own weakness is already charged above, once. */
   /* Sides and run totals are club-level, so nothing above touched them and every
      such leg drew the same letter every night — a label rather than a
      measurement. What varies is how confident the projection is: a pick at 51%
@@ -6060,25 +6116,112 @@ function evidence(o){
 /* The arc is written once and used twice: the trail is that path stroked, and
    the ball rides the same path via offset-path, so the two can never disagree
    about where the ball went. */
-const MOON_ARC = "M34 50 C 110 4, 210 4, 296 30";
+/* ---------------- the night's best line ----------------
 
-const MOONSHOT = '<svg class="moon" viewBox="0 0 320 62" preserveAspectRatio="xMidYMid meet"'
-  + ' role="img" aria-label="A batter driving a ball over the wall">'
-  /* Back wall and the crowd behind it, so the arc has something to clear. */
-  + '<rect class="crowd" x="238" y="8" width="82" height="30" rx="3"/>'
-  + '<path class="wall" d="M238 38 L238 12"/>'
-  + '<path class="ground" d="M0 52 L320 52"/>'
-  /* The batter: a stub of a body and a bat that swings through. */
-  /* Head, torso, and two legs in a stance — small, but enough that it reads as a
-     person rather than a lollipop at 78 pixels tall. */
-  + '<circle class="body" cx="24" cy="33" r="3.4"/>'
-  + '<path class="limb" d="M24 37 L24 44"/>'
-  + '<path class="limb" d="M24 44 L20 52"/>'
-  + '<path class="limb" d="M24 44 L29 52"/>'
-  + '<path class="bat" d="M24 40 L38 30"/>'
-  + '<path class="trail" d="' + MOON_ARC + '"/>'
-  + '<circle class="ball" style="offset-path:path(\'' + MOON_ARC + '\')"/>'
-  + '</svg>';
+   Every box score the app fetches already carries every player in the game, both
+   sides, whether or not the app named any of them. Settlement parses all of it
+   and then throws away everything it did not ask about. So the best offensive
+   line on the slate is already in memory once a night, and noticing it costs no
+   request at all — which is the only reason this is worth doing. Fetching thirty
+   box scores to decorate a header would not be.
+
+   Scored on what the box gives structurally: hits, home runs, runs and steals. No
+   parsing of the summary string for doubles and RBI, because that string is prose
+   and its shape has changed before. A weight of four on a home run and one on
+   everything else is a judgement, stated here rather than tuned — nothing depends
+   on it beyond which name appears above the numbers. */
+const STAR_KEY = "108.star";
+
+function lineScore(b){
+  if(!b || !b.batPA) return 0;
+  const h = b.batH || 0, hr = b.todayHr || 0;
+  return h + 3 * hr + (b.batR || 0) + (b.batSb || 0);
+}
+
+function noteStar(pk, date, box, teams){
+  let best = null, bestScore = 0;
+  for(const id in box){
+    const b = box[id];
+    if(!b.name || !b.batPA) continue;
+    const sc = lineScore(b);
+    if(sc > bestScore){ bestScore = sc; best = { id, b, sc }; }
+  }
+  /* A quiet three-for-four is not worth a headline; this is looking for the one
+     line on the slate that stood out. */
+  if(!best || bestScore < 6) return false;
+  const prev = S.star;
+  if(prev && prev.date === date && prev.score >= bestScore) return false;
+  const b = best.b;
+  S.star = { date, pk, id:Number(best.id), name:b.name, score:bestScore,
+    hr:b.todayHr || 0, h:b.batH || 0, r:b.batR || 0, sb:b.batSb || 0,
+    line:b.today || null,
+    team:b.side === "home" ? teams.home : teams.away };
+  try{ localStorage.setItem(STAR_KEY, JSON.stringify(S.star)); }catch(e){}
+  return true;
+}
+
+function loadStar(){
+  try{
+    const raw = localStorage.getItem(STAR_KEY);
+    const v = raw ? JSON.parse(raw) : null;
+    /* Yesterday's line, not last week's. Anything older is dropped rather than
+       shown, since a stale headline is worse than none. */
+    if(v && v.date && v.date >= iso(shift(-2))) S.star = v;
+  }catch(e){}
+}
+
+const MOON_ARC = "M36 56 C 112 4, 216 4, 296 31";
+
+/* One ball per home run, up to three, each leaving a beat after the last. With no
+   star to show it falls back to a single ball and no caption, which is the state
+   on any morning before a box score has been read. */
+function moonshot(){
+  const st = S.star;
+  /* Math.min(3, undefined) is NaN, and a NaN loop bound draws no balls at all —
+     an empty sky where the animation should be. Coerced and floored so a missing
+     or nonsensical homer count still shows one. */
+  const hr = st && isFinite(Number(st.hr)) ? Math.floor(Number(st.hr)) : 0;
+  const balls = Math.max(1, Math.min(3, hr));
+  /* A star object without a name is not a star: it produced a caption reading
+     "undefined" rather than falling back to none. */
+  const label = st && st.name
+    ? esc(lastName(st.name)) + ' \u00b7 ' + esc(st.line || ((st.h || 0) + " hits"))
+      + (st.team ? ' \u00b7 ' + ab(st.team) : "")
+    : null;
+  let out = MOON_OPEN;
+  for(let i = 0; i < balls; i++)
+    out += '<circle class="ball" style="offset-path:path(\'' + MOON_ARC + '\');'
+      + 'animation-delay:' + (i * 0.24).toFixed(2) + 's"/>';
+  out += '</svg>';
+  return out + (label
+    ? '<p class="moonwho"><span>Yesterday\u2019s best line</span>' + label + '</p>'
+    : "");
+}
+
+const MOON_OPEN = '<svg class="moon" viewBox="0 0 320 74" preserveAspectRatio="xMidYMid meet"'
+  + ' role="img" aria-label="A batter driving a ball over the outfield wall">'
+  /* Back to front, and the order matters: the stands are a filled block first,
+     then the crowd sits on top of it. Drawn the other way round the block covered
+     every one of them and the seats read as an empty box. */
+  + '<rect class="wall" x="248" y="18" width="72" height="28" rx="1"/>'
+  + '<circle class="fan" cx="256" cy="24" r="1.6"/><circle class="fan" cx="265" cy="24" r="1.6"/><circle class="fan" cx="274" cy="24" r="1.6"/><circle class="fan" cx="283" cy="24" r="1.6"/><circle class="fan" cx="292" cy="24" r="1.6"/><circle class="fan" cx="301" cy="24" r="1.6"/><circle class="fan" cx="310" cy="24" r="1.6"/><circle class="fan" cx="260" cy="30" r="1.6"/><circle class="fan" cx="269" cy="30" r="1.6"/><circle class="fan" cx="278" cy="30" r="1.6"/><circle class="fan" cx="287" cy="30" r="1.6"/><circle class="fan" cx="296" cy="30" r="1.6"/><circle class="fan" cx="305" cy="30" r="1.6"/><circle class="fan" cx="314" cy="30" r="1.6"/><circle class="fan" cx="256" cy="36" r="1.6"/><circle class="fan" cx="265" cy="36" r="1.6"/><circle class="fan" cx="274" cy="36" r="1.6"/><circle class="fan" cx="283" cy="36" r="1.6"/><circle class="fan" cx="292" cy="36" r="1.6"/><circle class="fan" cx="301" cy="36" r="1.6"/><circle class="fan" cx="310" cy="36" r="1.6"/>'
+  + '<path class="cap" d="M248 18 H320"/>'
+  /* The foul pole rises from the wall it belongs to rather than floating. */
+  + '<path class="pole" d="M249 18 V3"/>'
+  + '<path class="ground" d="M0 58 H320"/>'
+  /* A shallow infield edge. An arc of radius 46 across this width climbed to the
+     top of the frame and read as a dome over the batter's head. */
+  + '<path class="dirt" d="M10 58 Q 52 48, 94 58"/>'
+  /* Head, torso and two legs in a stance — small, but enough that it reads as a
+     person rather than a lollipop at this size. */
+  + '<circle class="body" cx="26" cy="36" r="3.4"/>'
+  + '<path class="limb" d="M26 40 L26 48"/>'
+  + '<path class="limb" d="M26 48 L21 58"/>'
+  + '<path class="limb" d="M26 48 L31 58"/>'
+  + '<path class="bat" d="M26 43 L41 32"/>'
+  + '<circle class="splash" cx="296" cy="31" r="5"/>'
+  + '<path class="arc" d="' + MOON_ARC + '"/>'
+  + '<path class="comet" d="' + MOON_ARC + '"/>';
 
 /* Three bats worth looking at first, each chosen by a different question.
 
@@ -6139,9 +6282,7 @@ function highlightBlock(games){
   };
   const cell = (tag, b, figure, label, kind) => {
     const ev = evidence({ kind, pa:b.pa, posted:b.posted, tba:b.tba,
-      p:kind === "hit" ? b.pHit : b.tonight,
-      moved:b.raw != null && b.tonight != null && b.raw > 0
-        ? Math.abs(b.raw - b.tonight) / b.raw : null });
+      p:kind === "hit" ? b.pHit : b.tonight });
     return '<div class="hcard">'
     + '<span class="htag">' + tag + '</span>'
     + '<div class="hname">'
@@ -6156,7 +6297,7 @@ function highlightBlock(games){
     + '</div>';
   };
 
-  return MOONSHOT
+  return moonshot()
     + '<h2 class="eyebrow">Three to look at first</h2>'
     + '<div class="hgrid">'
       + cell("Most likely to go deep", h.power, pct(h.power.tonight), "home run", "hr")
@@ -6240,7 +6381,7 @@ function parlayBlock(){
     /* A leg decided with the game still on gets the same glyph at reduced
        weight: settled and merely certain are not quite the same thing. */
     const ev = evidence({ kind:leg.kind, pa:leg.pa, gs:leg.gs, p:leg.p,
-      posted:leg.posted, tba:leg.tba, moved:leg.moved });
+      posted:leg.posted, tba:leg.tba });
     const mark = leg.void ? ["t", "\u2013"]
       : leg.hit != null ? (leg.hit ? ["y", "\u2713"] : ["n", "\u2717"])
       : leg.clear ? ["y prov", "\u2713"]
@@ -6289,8 +6430,10 @@ function parlayBlock(){
             : !s.remaining ? '<b>Landed</b>'
             : s.remaining === s.n ? '<b>' + s.n + ' legs</b>, all landing'
             : '<b>' + s.remaining + '</b> still to land') + '</span>'
-        + '<span class="cdscore">' + (!s.n || s.dead || !s.remaining
-            ? '\u2014' : '<b>' + (s.conditional * 100).toFixed(1) + '%</b>') + '</span>'
+        + '<span class="cdscore">' + (!s.n || s.dead || !s.remaining ? '\u2014'
+            : '<b>' + (s.conditional >= 0.001
+                ? (s.conditional * 100).toFixed(1) + '%' : odds(s.conditional))
+              + '</b>') + '</span>'
       + '</div>'
       + '<div class="cdmeta">' + (!s.n ? '<span>every leg voided</span>'
           : (s.dead || !s.remaining ? "" : '<span>' + odds(s.conditional) + '</span>')
@@ -6298,8 +6441,13 @@ function parlayBlock(){
             + (s.early ? '<span>' + s.early + ' clear with the game live</span>' : "")
             /* The pre-game figure stays visible, because the record grades what
                was claimed before first pitch, not what survived to the ninth. */
+            /* A long card's joint runs below a tenth of a per cent and printed as
+               "said 0.0% pre-game", which tells you nothing about a card that was
+               a genuine long shot. Odds carry it at any length. */
             + (s.remaining < s.n
-                ? '<span>said ' + (s.joint * 100).toFixed(1) + '% pre-game</span>' : ""))
+                ? '<span>said ' + (s.joint >= 0.001
+                    ? (s.joint * 100).toFixed(1) + '%' : odds(s.joint))
+                  + ' pre-game</span>' : ""))
         + (s.voided ? '<span>' + s.voided + ' void</span>' : "")
       + '</div>'
       + rec.legs.map(legRow).join("")
@@ -6809,7 +6957,7 @@ function render(resetScroll){
     + 'Odds simulated in this browser from the records above.<br>'
     + 'Build ' + BUILD
     + (Object.keys(S.diag).length
-        ? '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","spHistory","rosters","hitters","hitterForm"]
+        ? '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","spHistory","rosters","bats","hitters","hitterForm"]
             .filter(k => S.diag[k] != null)
             .map(k => k + ' ' + S.diag[k]).join(' \u00b7 ')
         : "")
@@ -7050,6 +7198,7 @@ S.card = loadScorecard();
 repairScorecard();
 S.parlay = loadParlay();
 loadCal();
+loadStar();
 try{
   const f = JSON.parse(localStorage.getItem(FIT_KEY) || "null");
   if(f && typeof f.a === "number" && typeof f.b === "number") S.calFit = f;
