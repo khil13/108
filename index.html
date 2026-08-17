@@ -121,7 +121,7 @@ ul{margin:0;padding:0;list-style:none;}
      standings row stretched to 1,140px leaves the club name marooned from its
      numbers, so tables keep a readable width and centre themselves. */
   .dblock,.method,.thead,.trow,.pthead,.prow,.othead,.orow,.follow,.since,
-  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk,.cdio,.leadgrp,.hgrid{
+  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk,.cdio,.leadgrp,.hgrid,.worst{
     max-width:740px;margin-left:auto;margin-right:auto;}
 }
 @media(min-width:1600px){
@@ -476,6 +476,20 @@ ul{margin:0;padding:0;list-style:none;}
   padding:1px 4px;border-radius:2px;border:1px solid currentColor;vertical-align:2px;}
 .gA{color:var(--grass);} .gB{color:var(--bulb);}
 .gC{color:#C89B5A;} .gD{color:var(--blush);}
+.worst{background:var(--deep);border:1px solid var(--line);border-radius:5px;
+  padding:10px 12px 8px;margin-top:11px;}
+.worsttitle{font-family:var(--mono);font-size:8.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--bulb);margin-bottom:8px;}
+.worsthead{font-family:var(--mono);font-size:9px;letter-spacing:.05em;
+  text-transform:uppercase;color:#5B7378;margin:7px 0 3px;}
+.worstrow{display:grid;grid-template-columns:1fr auto 42px;gap:8px;align-items:baseline;
+  padding:3px 0;}
+.worstrow + .worstrow{border-top:1px solid rgba(34,67,74,.5);}
+.worstrow span{font-size:12px;color:var(--chalk);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.worstrow em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:#738E93;
+  white-space:nowrap;}
+.worstrow b{font-family:var(--mono);font-size:11px;color:var(--blush);text-align:right;}
 .leadgrp{background:var(--deep);border:1px solid var(--line);border-radius:5px;
   padding:11px 13px 9px;margin-top:10px;}
 .leadhead{display:flex;align-items:baseline;gap:8px;padding-bottom:7px;
@@ -1079,6 +1093,9 @@ async function loadPitchers(ids){
       whip:s && s.whip != null && s.whip !== "-" ? parseFloat(s.whip) : null,
       ip,
       w:s ? s.wins : null, l:s ? s.losses : null, gs:s ? s.gamesStarted : null,
+      /* Total appearances, not just starts. Without it there is no way to tell a
+         pure starter from a swingman, and the two need different arithmetic. */
+      g:s && s.gamesPlayed != null ? Number(s.gamesPlayed) : null,
       k9:s ? per9(s.strikeOuts, s.strikeoutsPer9Inn) : null,
       hr9:s ? per9(s.homeRuns, s.homeRunsPer9) : null,
       bb9:s ? per9(s.baseOnBalls, s.walksPer9Inn) : null,
@@ -1864,10 +1881,28 @@ function scorecardSummary(){
   }
 
   let absErr = 0, totN = 0, watchN = 0, watchHr = 0, kN = 0, kErr = 0, kBias = 0;
+  /* The worst individual misses, not only the average of them.
+
+     A mean is exactly the wrong statistic for finding a broken input. Thirty-six
+     strikeout picks off by 1.5 and four off by five average to the same figure as
+     a model that is uniformly mediocre — so a systematic error affecting a tenth
+     of picks sits inside a healthy-looking 2.1 and cannot be seen. The projection
+     that read 6.5 strikeouts for a pitcher the books had at 2.5 was in the record
+     the whole time, averaged away.
+
+     Kept as a short list of the largest errors, which is where a broken input
+     announces itself: one name with a five-strikeout miss is noise, three of them
+     sharing a shape is a bug. */
+  const kWorst = [], runWorst = [];
   let watchExp = 0, watchVar = 0, watchExpN = 0, watchHrP = 0, watchDnp = 0;
   let hitN = 0, hitGot = 0, hitExp = 0, runN = 0, runGot = 0, runExp = 0;
   for(const e of settled){
-    if(e.total != null){ absErr += Math.abs(e.total - (e.hs + e.as)); totN++; }
+    if(e.total != null){
+      const err = Math.abs(e.total - (e.hs + e.as));
+      absErr += err; totN++;
+      runWorst.push({ name:ab(e.aid) + " at " + ab(e.hid), exp:e.total,
+                      actual:e.hs + e.as, err, date:e.date });
+    }
     for(const w of watchList(e)){
       if(w.dnp){ watchDnp++; continue; }
       if(!w.result) continue;
@@ -1890,6 +1925,8 @@ function scorecardSummary(){
     if(Array.isArray(e.ks)) for(const k of e.ks){
       if(k.actual == null) continue;
       kN++; kErr += Math.abs(k.exp - k.actual); kBias += k.exp - k.actual;
+      kWorst.push({ name:k.name, exp:k.exp, actual:k.actual,
+                    err:Math.abs(k.exp - k.actual), date:e.date });
     }
   }
   const n = called.length;
@@ -1901,7 +1938,9 @@ function scorecardSummary(){
            hitN, hitGot, hitExp, runN, runGot, runExp,
            watchSd:watchVar > 0 ? Math.sqrt(watchVar) : null,
            high, highRight,
-           kN, kMAE:kN ? kErr / kN : null, kBias:kN ? kBias / kN : null };
+           kN, kMAE:kN ? kErr / kN : null, kBias:kN ? kBias / kN : null,
+           kWorst:kWorst.sort((a, b) => b.err - a.err).slice(0, 4),
+           runWorst:runWorst.sort((a, b) => b.err - a.err).slice(0, 4) };
 }
 
 /* ---------------- projected total ----------------
@@ -1967,11 +2006,32 @@ function projectTotal(g){
    relative to the league. Every input is measured — his K/9 and innings from his
    own season, the lineup's rate from the same hitting data — so the only
    judgement is the shape of the formula. */
+/* How long this man's starts actually run.
+
+   Season innings divided by season starts is innings per start only for someone
+   who never relieves. For a swingman it charges every relief inning against his
+   starts and inflates the figure badly: seventy-eight innings over eleven starts
+   reads as 7.1, which put a projection of seven strikeouts and a line at 6.5 on a
+   pitcher the books priced at 2.5 — he was throwing about two innings an outing.
+
+   So the last few actual starts come first, since those are starts by definition
+   and the app already fetches them for the form line. Failing that, season
+   innings over season starts, but only for someone whose appearances and starts
+   roughly agree. When they do not and there is no start history, the honest
+   answer is that the app cannot tell, and no projection is made. */
+function startInnings(p){
+  const f = p.form;
+  if(f && f.n >= 2 && f.ip > 0) return f.ip / f.n;
+  if(!p.ip || !p.gs) return null;
+  if(p.g != null && p.g > p.gs + 2) return null;   // relieves too; cannot separate
+  return p.ip / p.gs;
+}
+
 function projectStrikeouts(pid, oppTeamId){
   const p = S.pitchers[pid];
   if(!p || p.k9 == null || !p.ip || !p.gs || p.gs < 3) return null;
-  const ipPerStart = p.ip / p.gs;
-  if(ipPerStart < 2) return null;                 // not really a starter
+  const ipPerStart = startInnings(p);
+  if(ipPerStart == null || ipPerStart < 2) return null;   // not really a starter
   let mult = 1;
   const opp = S.teamBat[oppTeamId];
   const lgK = leagueKRate();
@@ -3896,8 +3956,11 @@ function pitcherArchetype(p){
   if(!p || p.k9 == null || p.bb9 == null || !p.ip || !p.gs || p.gs < 3) return null;
   const lg = leagueStarterRates();
   if(!lg) return null;
-  const ipStart = p.ip / p.gs;
-  if(ipStart < 2) return null;
+  /* Through startInnings, not p.ip / p.gs. The raw division counts relief innings
+     against starts and read 7.1 for a man throwing two, which is the bug this
+     function would otherwise repeat in its own words. */
+  const ipStart = startInnings(p);
+  if(ipStart == null || ipStart < 2) return null;
   const kd = p.k9 - lg.k9, bd = p.bb9 - lg.bb9;
   const bits = [];
   if(kd >= 1.2) bits.push("swing-and-miss stuff");
@@ -6682,6 +6745,39 @@ function scorecardBlock(){
       + '<div><b>' + (s.watchN ? s.watchHr + '/' + s.watchN : "\u2014")
         + '</b><span>bats homered</span></div>'
     + '</div>'
+
+    /* The tail, next to the average.
+
+       An average error is the wrong tool for spotting a broken input: it is a
+       summary designed to smooth exactly the outliers a bug produces. This lists
+       the largest individual misses instead, which is where a wrong input shows
+       itself — one big miss is a pitcher having an odd night, three sharing a
+       shape is something in the arithmetic. */
+    + (() => {
+        const rows = [];
+        const worst = (list, label, unit) => {
+          if(!list || !list.length || list[0].err < 3) return;
+          rows.push('<div class="worsthead">' + label + '</div>'
+            + list.filter(w => w.err >= 3).slice(0, 3).map(w =>
+                '<div class="worstrow"><span>' + esc(w.name || "\u2014") + '</span>'
+                + '<em>said ' + w.exp.toFixed(1) + ', got ' + w.actual + unit + '</em>'
+                + '<b>' + (w.exp > w.actual ? "+" : "\u2212")
+                + w.err.toFixed(1) + '</b></div>').join(""));
+        };
+        worst(s.kWorst, "Strikeouts", "");
+        worst(s.runWorst, "Run totals", "");
+        if(!rows.length) return "";
+        return '<div class="worst">'
+          + '<div class="worsttitle">Furthest off</div>' + rows.join("")
+          + '</div>'
+          + '<p class="note">The biggest single misses on file, alongside the averages '
+          + 'above. An average is built to smooth outliers, which makes it the wrong '
+          + 'place to look for a broken input: a projection that read six strikeouts for '
+          + 'a pitcher who threw two sat inside a healthy-looking average for days, and '
+          + 'was only caught by comparing it against a bookmaker. One large miss is a '
+          + 'strange night. Three with the same shape is something in the arithmetic, and '
+          + 'this is where that would show.</p>';
+      })()
 
     + '<p class="note cdsum">'
       + (s.n
