@@ -719,7 +719,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "130 — a ballpark, a comet trail and a landing in the seats";
+const BUILD = "131 — the grade\u2019s wording matches the number it is about";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -806,7 +806,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, bpLgHr9:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, bpLgHr9:null, runDef:{}, lgCs:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, leadOpen:false, feedTradeSeen:null, star:null, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -2459,9 +2459,23 @@ async function loadBullpens(){
   const splits = (j.stats && j.stats[0] && j.stats[0].splits) || [];
   const acc = {};
   let lgER = 0, lgIP = 0, lgHR = 0;
+  /* The same response already carries stolen bases allowed and runners caught, for
+     every pitcher on every staff. Accumulated per club here because a steal leg
+     had no nightly term at all: its whole number was the runner's season total
+     over his club's games, so the league's best thief was the best steal leg every
+     single night — measured over twelve simulated nights, one name took five of
+     them. Who is behind the plate and on the mound is the thing that varies, and
+     this is the only handle on it in a keyless feed.
+
+     Over every pitcher, not just relievers: a runner going in the third faces the
+     starter, and the club's rate is the club's rate. */
+  const run = {};
   for(const s of splits){
     const tid = (s.team || {}).id, st = s.stat || {};
     if(!T[tid]) continue;
+    const r = run[tid] || (run[tid] = { sb:0, cs:0 });
+    r.sb += Number(st.stolenBases) || 0;
+    r.cs += Number(st.caughtStealing) || 0;
     if(st.gamesStarted == null || Number(st.gamesStarted) !== 0) continue;
     const ip = inningsOf(st.inningsPitched), er = Number(st.earnedRuns);
     if(!ip || ip <= 0 || isNaN(er)) continue;
@@ -2476,8 +2490,18 @@ async function loadBullpens(){
     teams[k] = { era:9 * acc[k].er / acc[k].ip, ip:acc[k].ip,
                  hr9:9 * acc[k].hr / acc[k].ip };
   }
+  /* Caught-stealing rate per club, and the league's, with a floor on attempts so
+     a club nobody has run against does not read as impregnable. */
+  const def = {};
+  let lgSb = 0, lgCs = 0;
+  for(const k in run){
+    const att = run[k].sb + run[k].cs;
+    lgSb += run[k].sb; lgCs += run[k].cs;
+    if(att >= 20) def[k] = run[k].cs / att;
+  }
   return { teams, lg:lgIP > 0 ? 9 * lgER / lgIP : null,
-           lgHr9:lgIP > 0 ? 9 * lgHR / lgIP : null };
+           lgHr9:lgIP > 0 ? 9 * lgHR / lgIP : null,
+           def, lgCs:(lgSb + lgCs) >= 200 ? lgCs / (lgSb + lgCs) : null };
 }
 
 /* ---------------- the feed ----------------
@@ -3040,6 +3064,7 @@ async function loadDetail(){
     /* Cleared so the guards below fetch again rather than skipping. Each piece
        re-renders as it lands, the same as on a cold start. */
     S.pitchers = {}; S.bullpens = {}; S.bpLg = null; S.bpLgHr9 = null;
+    S.runDef = {}; S.lgCs = null;
     S.rosters = {}; S.bats = {}; S.hitters = {}; S.teamBat = {}; S.runners = {};
   }
   S.detailState = "loading";
@@ -3058,7 +3083,8 @@ async function loadDetail(){
 
   if(!Object.keys(S.bullpens).length){
     const bp = await loadBullpens();
-    S.bullpens = bp.teams; S.bpLg = bp.lg; S.bpLgHr9 = bp.lgHr9; render();
+    S.bullpens = bp.teams; S.bpLg = bp.lg; S.bpLgHr9 = bp.lgHr9;
+    S.runDef = bp.def || {}; S.lgCs = bp.lgCs; render();
   }
   S.diag.bullpens = Object.keys(S.bullpens).length;
 
@@ -5505,12 +5531,25 @@ const PARLAY_KEY = "108.parlay";
    forced the card either short or deep. Tying the length to the number of games
    makes the card a read of the day rather than a fixed-size product, with a floor
    so a three-game Monday still produces something worth settling. */
-const PARLAY_MIN = 8;
-const parlayTarget = nGames => Math.max(PARLAY_MIN, nGames);
-/* And the per-kind cap scales with it, so a fifteen-leg card is three of each
-   rather than five of one. Never below two: a kind that can only appear once is
-   a kind that shows the same name every night. */
-const kindCap = target => Math.max(2, Math.ceil(target / 5));
+const PARLAY_LEGS = 8;
+/* Eight, whatever the slate offers.
+
+   The card followed the number of games for a while, on the reasoning that a
+   fuller day deserved a fuller card. What that produced was thirteen and fifteen
+   leg cards at one in twenty thousand and one in ninety thousand, which cannot
+   land and so cannot tell you anything: a week of them read as a terrible week
+   when the legs underneath were hitting 47%, exactly their expectation. Eight is
+   the length where the card is still a long shot but a real one, and the leg rate
+   in the record measures the picks either way.
+
+   Still floored the same way, so a three-game Monday produces eight legs by
+   looking harder at those three rather than a card of three. */
+const parlayTarget = () => PARLAY_LEGS;
+/* Two of each across five kinds is exactly eight plus a little slack, so the cap
+   sits at two: every kind is represented, none takes more than a quarter of the
+   card, and the two thin kinds — homers and steals — each get the second slot
+   that stops them naming the same player every night. */
+const kindCap = () => 2;
 
 function loadParlay(){
   try{
@@ -5770,10 +5809,24 @@ function legsFor(g){
        know how often he plays. That understates his rate on a night he is in the
        lineup and overstates the chance he is in it at all. The two pull opposite
        ways and neither is measured, which is the weakest leg here. */
+    /* Against whoever is defending. A club that throws out a third of runners is a
+       materially worse place to run than one at fifteen per cent, and until now the
+       leg knew nothing about that: its whole number was the runner's own season
+       total, so the same name won every night. Measured against the league and
+       damped like every other multiplier here, and it stands aside entirely when
+       the club has not been run against enough to have a rate. */
+    const opp = tid === g.hid ? g.aid : g.hid;
+    const csRate = S.runDef ? S.runDef[opp] : null;
+    const csMult = (csRate != null && S.lgCs != null && S.lgCs < 1)
+      ? Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, (1 - csRate) / (1 - S.lgCs)))
+      : 1;
     add({ pk:g.pk, kind:"sb", pid:r.id, team:tid, posted:!!lu,
-          p:1 - Math.exp(-r.sb / games),
+          p:1 - Math.exp(-(r.sb / games) * csMult),
           label:lastName(r.name) + " to steal",
           detail:r.sb + " in " + games + " games"
+            + (csRate != null
+                ? " \u00b7 " + ab(opp) + " throws out " + Math.round(csRate * 100) + "%"
+                : "")
             + (lu ? " \u00b7 starting" : " \u00b7 lineup TBA") });
     }
   }
@@ -5815,8 +5868,8 @@ function buildParlay(date){
      dropped home runs entirely, because they are systematically the least. So:
      one of every kind available first, then fill to the cap, then fill regardless.
      A card of one bet repeated eight times tests nothing. */
-  const target = parlayTarget(games.length);
-  const cap = kindCap(target);
+  const target = parlayTarget();
+  const cap = kindCap();
   /* Whether the slate can fill the card from separate fixtures. When it can, no
      game is ever asked twice. */
   const thin = games.length < target;
@@ -6068,10 +6121,18 @@ function evidence(o){
   if(GRADE_BASE[o.kind] >= 1.4) why.push([GRADE_BASE[o.kind], "the weakest component in the record", "kind"]);
   else if(GRADE_BASE[o.kind] >= 0.8) why.push([GRADE_BASE[o.kind], "from a component that runs middling", "kind"]);
 
+  /* The wording scales with the number, because one sentence for every sample
+     below five hundred said "465 plate appearances is a thin sample" — and 465 is
+     most of a full season, printed under a B grade as though something were
+     wrong. A partial season and a hundred-odd trips to the plate are different
+     complaints and now read as different complaints. */
   if(o.pa != null) hit(o.pa >= 500 ? 0 : o.pa >= 300 ? 0.4 : o.pa >= 150 ? 0.9 : 1.5,
-    o.pa + " plate appearances is a thin sample");
+    o.pa >= 300 ? o.pa + " plate appearances, short of a full season"
+      : o.pa >= 150 ? "only " + o.pa + " plate appearances behind the rate"
+      : "just " + o.pa + " plate appearances \u2014 very little to go on");
   if(o.gs != null) hit(o.gs >= 15 ? 0 : o.gs >= 8 ? 0.5 : 1.1,
-    "only " + o.gs + " starts on file");
+    o.gs >= 8 ? o.gs + " starts on file, short of a full season"
+      : "just " + o.gs + " starts on file");
   /* An unposted lineup costs a little rather than a lot, because it is the normal
      state of the world: lineups appear three or four hours before first pitch, so
      a card built in the morning has every bat unposted. Charging 0.7 for it meant
@@ -6097,6 +6158,10 @@ function evidence(o){
   }
 
   const letter = cost <= 0.5 ? "A" : cost <= 1.2 ? "B" : cost <= 2.2 ? "C" : "D";
+  /* An A means nothing meaningful is missing, so it does not get a complaint
+     printed under it. A single small deduction can still land inside the A band,
+     and leading with it read as though the top mark were a warning. */
+  if(letter === "A") return { letter, cost, why:"everything on file and in sample" };
   /* The component's own weakness is a property of the kind, not of this pick, and
      it is already implied by what the row says it is. So the reason prefers
      whatever is specific to tonight — an unposted lineup, a thin sample, an
@@ -6486,26 +6551,25 @@ function parlayBlock(){
       + 'reliable by being multiplied together \u2014 the product falls faster than any '
       + 'of them improves. There is also no price here: without a book\u2019s number this '
       + 'cannot tell you a leg is mispriced, only how likely the app thinks it is.</p>'
-      + '<p class="note">The card is as long as the slate: fifteen games gives fifteen '
-      + 'picks, one from each, and a short night gives eight found by looking harder at '
-      + 'the games there are. Five kinds \u2014 the side, the run total, a '
-      + 'starter\u2019s strikeouts, a home run and a steal \u2014 taken one of each, then '
-      + 'two of each, and so on, so a fifteen-leg card is three apiece rather than five '
-      + 'of one. Filling by probability instead handed the last places to strikeouts and '
-      + 'run totals, which left one slot each for homers and steals, and one slot is one '
-      + 'name: the best of that kind on the slate, who is the same player most nights. Home runs and steals were dropped for a '
+      + '<p class="note">Eight legs, whatever the slate offers. Five kinds \u2014 the '
+      + 'side, the run total, a starter\u2019s strikeouts, a home run and a steal \u2014 '
+      + 'one of each first, then a second of each, so no kind takes more than a quarter '
+      + 'of the card. The card followed the number of games for a while, which gave '
+      + 'thirteen and fifteen leg cards at one in twenty thousand and worse: those cannot '
+      + 'land, so they cannot tell you anything. Filling the last places by probability '
+      + 'instead of by kind handed them all to strikeouts and run totals, leaving one slot '
+      + 'each for homers and steals \u2014 and one slot is one name, the best of that kind '
+      + 'on the slate, who is the same player most nights. Home runs and steals were dropped for a '
       + 'stretch when the homer picks were running three sigma under their own '
       + 'expectation; what fixed that was not removing them but measuring the bias and '
       + 'correcting for it, so the homer legs now use the number the record has mapped '
       + 'rather than the raw one. Steal legs remain the weakest: how often a runner '
       + 'actually starts is only known once a lineup is posted, and the leg says which '
       + 'of the two it is.</p>'
-      + '<p class="note">More legs is not more chances \u2014 it is fewer. Every leg added '
-      + 'multiplies the card down, and the ones added last are the least likely, so a '
-      + 'fifteen-game night is a far longer shot than an eight-leg one. That is a property '
-      + 'of the slate rather than of the picks: a fuller day is not a worse day, it is a '
-      + 'longer card. The figure at the top is the one that tracks it, and it is the '
-      + 'number to read.</p>';
+      + '<p class="note">More legs is not more chances \u2014 it is fewer. Every leg '
+      + 'multiplies the card down and the ones added last are the least likely, which is '
+      + 'why the length is fixed rather than following the slate. The figure at the top '
+      + 'tracks it; the share of legs landing, below, is what measures the picks.</p>';
   }
 
   if(past.length){
@@ -6520,23 +6584,45 @@ function parlayBlock(){
           + '<span class="cdscore">' + (s.n
               ? '<b>' + s.hit + '</b>\u2013' + (s.done - s.hit) : '\u2014') + '</span>'
         + '</div>'
+        /* The third place this figure appears, and the last one still rounding a
+           thirteen-leg card's chance down to "said 0.0%" — which reads as the app
+           having claimed nothing at all. Odds carry it at any length. */
         + '<div class="cdmeta">' + (s.n
-            ? '<span>said ' + (s.joint * 100).toFixed(1) + '%</span>'
+            ? '<span>said ' + (s.joint >= 0.001
+                ? (s.joint * 100).toFixed(1) + '%' : odds(s.joint)) + '</span>'
               + '<span>' + (s.landed ? "landed" : "did not land") + '</span>'
+              /* How many legs came in, which is the part of a long card that
+                 carries information. The card is built to fail; the legs are what
+                 the record is actually measuring. */
+              + (s.done ? '<span>' + Math.round(100 * s.hit / s.done)
+                  + '% of legs</span>' : "")
             : '<span>every leg voided</span>') + '</div>'
         + '</div>';
     }
     const all = past.map(parlaySummary).filter(a => a.n > 0);
     const landed = all.filter(a => a.landed).length;
     const expected = all.reduce((n, a) => n + a.joint, 0);
+    /* Legs across every card on file. A run of failed cards says almost nothing —
+       they are built to fail — but the share of legs that came in is directly
+       comparable to what was claimed for them, and that is a real check. */
+    let legHit = 0, legDone = 0;
+    for(const a of all){ legHit += a.hit; legDone += a.done; }
     if(all.length) out += '<p class="note">' + landed + ' of ' + all.length
       + (all.length === 1 ? ' card' : ' cards') + ' landed, against '
       + expected.toFixed(2) + ' expected from the app\u2019s own numbers. '
+      + (legDone
+          ? '<b>' + legHit + ' of ' + legDone + ' legs came in, '
+            + Math.round(100 * legHit / legDone) + '%.</b> That is the figure worth '
+            + 'watching. A card of ten legs or more is arithmetically almost certain to '
+            + 'fail, so a column of crosses is not a verdict on the picks; the share of '
+            + 'legs landing is, and it can be compared against what the card claimed. '
+          : "")
       + (landed > expected + 1
-          ? 'Ahead of expectation, over a sample far too small to mean anything.'
-          : 'A card of eight legs is supposed to fail almost always; that it does is not '
-            + 'evidence the legs are wrong, and it landing once would not be evidence '
-            + 'they are right.') + '</p>';
+          ? 'The cards themselves are ahead of expectation, over a sample far too small '
+            + 'to mean anything.'
+          : 'A long card is supposed to fail almost always; that it does is not evidence '
+            + 'the legs are wrong, and it landing once would not be evidence they are '
+            + 'right.') + '</p>';
   }
   return out;
 }
