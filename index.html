@@ -121,7 +121,7 @@ ul{margin:0;padding:0;list-style:none;}
      standings row stretched to 1,140px leaves the club name marooned from its
      numbers, so tables keep a readable width and centre themselves. */
   .dblock,.method,.thead,.trow,.pthead,.prow,.othead,.orow,.follow,.since,
-  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk,.cdio,.leadgrp{
+  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk,.cdio,.leadgrp,.hgrid{
     max-width:740px;margin-left:auto;margin-right:auto;}
 }
 @media(min-width:1600px){
@@ -349,6 +349,81 @@ ul{margin:0;padding:0;list-style:none;}
    Named-bat colour comes from col(teamId) on the header bar only; the three
    in-row bars use fixed tones (hit/run/homer) so the same stat reads the same
    colour from club to club, which matters more here than the club identity does. */
+/* A ball leaving the park, at the top of the Plays tab.
+
+   Drawn rather than fetched: an inline SVG and two keyframes, so it costs no
+   request and nothing to load. The ball follows a fixed arc, the trail draws
+   itself along the same path, and the whole thing rests for a beat before going
+   again — a loop that is easy to ignore, since it sits above numbers people are
+   here to read rather than competing with them.
+
+   The global prefers-reduced-motion rule already stops every animation in the
+   app, so a phone set to reduce motion gets the scene holding still with the
+   ball at the wall, which still reads as what it is. */
+.moon{display:block;width:100%;height:78px;margin:2px 0 4px;overflow:hidden;}
+.moon .sky{fill:none;}
+.moon .ground{stroke:var(--line);stroke-width:1;}
+.moon .wall{stroke:#22434A;stroke-width:2;stroke-linecap:round;}
+.moon .crowd{fill:#12252A;}
+.moon .bat{stroke:var(--chalk);stroke-width:2.2;stroke-linecap:round;
+  transform-origin:24px 40px;animation:swing 4.2s cubic-bezier(.3,.1,.2,1) infinite;}
+.moon .body{fill:#5B7378;}
+.moon .limb{stroke:#5B7378;stroke-width:2.2;stroke-linecap:round;fill:none;}
+/* Trail and ball share one easing and one set of keyframe times, so the ball sits
+   at the head of its own streak instead of outrunning it. The dash length is the
+   measured length of the arc — getTotalLength says 270.4 — and a wrong value here
+   shows as a trail that finishes early or never quite completes. */
+.moon .trail{fill:none;stroke:var(--bulb);stroke-width:1.5;stroke-linecap:round;
+  stroke-dasharray:271;stroke-dashoffset:271;opacity:.5;
+  animation:streak 4.2s cubic-bezier(.22,.62,.4,1) infinite;}
+.moon .ball{fill:var(--chalk);r:3.2;
+  animation:launch 4.2s cubic-bezier(.22,.62,.4,1) infinite;}
+@keyframes swing{
+  0%,6%   { transform:rotate(-58deg); }
+  11%     { transform:rotate(34deg); }
+  32%     { transform:rotate(22deg); }
+  60%,100%{ transform:rotate(-58deg); }
+}
+@keyframes launch{
+  0%,9%   { offset-distance:0%;   opacity:0; }
+  10%     { offset-distance:0%;   opacity:1; }
+  60%     { offset-distance:100%; opacity:1; }
+  74%     { offset-distance:100%; opacity:0; }
+  100%    { offset-distance:100%; opacity:0; }
+}
+@keyframes streak{
+  0%,9%   { stroke-dashoffset:271; opacity:0; }
+  10%     { stroke-dashoffset:271; opacity:.5; }
+  60%     { stroke-dashoffset:0;   opacity:.5; }
+  74%     { stroke-dashoffset:0;   opacity:0; }
+  100%    { stroke-dashoffset:0;   opacity:0; }
+}
+
+/* The three highlights: one card each, side by side where there is room and
+   stacked on a narrow screen. The tag is the question, the figure is the answer,
+   and the line underneath is why this bat and not another. */
+.hgrid{display:grid;grid-template-columns:1fr;gap:9px;margin-top:10px;}
+@media(min-width:560px){ .hgrid{grid-template-columns:1fr 1fr 1fr;} }
+.hcard{background:var(--deep);border:1px solid var(--line);border-radius:5px;
+  padding:11px 13px 10px;}
+.htag{display:block;font-family:var(--mono);font-size:8.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--bulb);margin-bottom:7px;}
+.hname{display:flex;align-items:center;gap:7px;font-size:15px;color:var(--chalk);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.hfig{display:flex;align-items:baseline;gap:6px;margin:5px 0 6px;}
+.hfig b{font-family:var(--display);font-size:26px;line-height:1;color:var(--bulb);}
+.hfig span{font-size:11px;color:var(--slate);}
+.hwhy{font-family:var(--mono);font-size:9.5px;color:#738E93;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.hwhy.ev{margin-top:3px;color:#5B7378;font-style:italic;}
+/* The letter grades how much evidence sits behind the number, not whether the
+   bet is good — that would need a market price this app does not have. */
+.hgrade{margin-left:auto;font-family:var(--display);font-size:15px;line-height:1;
+  padding:2px 6px;border-radius:3px;border:1px solid currentColor;}
+.cdgrade{font-style:normal;font-family:var(--display);font-size:11px;margin-left:5px;
+  padding:1px 4px;border-radius:2px;border:1px solid currentColor;vertical-align:2px;}
+.gA{color:var(--grass);} .gB{color:var(--bulb);}
+.gC{color:#C89B5A;} .gD{color:var(--blush);}
 .leadgrp{background:var(--deep);border:1px solid var(--line);border-radius:5px;
   padding:11px 13px 9px;margin-top:10px;}
 .leadhead{display:flex;align-items:baseline;gap:8px;padding-bottom:7px;
@@ -592,7 +667,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "120 — the card is as long as the slate, floored at eight";
+const BUILD = "125 — a ball leaving the park, at the top of the Plays tab";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -2062,7 +2137,7 @@ function rankedBats(g, batTeam, oppPid, oppTeam, cond){
     const plat = platoonMult(side, hand);
     const platC = platoonMult(side, hand, CONTACT_PLATOON);
     ranked.push({ score:r.rate * plat * hr9, batter:b.name, batterId:b.id, team:batTeam,
-                  perPA:b.perPA, hr:b.hr,
+                  perPA:b.perPA, hr:b.hr, pa:b.pa,
                   hRate:b.pa > 0 ? (b.h || 0) / b.pa : 0,
                   rRate:b.pa > 0 ? (b.r || 0) / b.pa : 0, platC,
                   pitcher:known ? p.name : null,
@@ -5593,9 +5668,20 @@ function legsFor(g){
        parlay so much as a rounding error dressed as one. At the projection the
        leg is a coin flip on the app's own number, which is what it should be. */
     const need = Math.max(3, Math.round(k.exp));
-    add({ pk:g.pk, kind:"k", pid, team:ownId, need,
-          p:poissonAtLeast(need, k.exp),
-          label:lastName((S.pitchers[pid] || {}).name) + " " + need + "+ strikeouts",
+    /* A line and a side, rather than a floor. "4+ strikeouts" only ever asked
+       whether he would clear it, so the card could never say a pitcher was
+       likely to fall short — every strikeout leg was an over by construction,
+       and on a starter projected below his line that is the worse side of the
+       bet. The line sits half a strikeout under the rounded projection, and the
+       leg takes whichever side of it the projection actually favours. */
+    const line = need - 0.5;
+    const pOver = poissonAtLeast(need, k.exp);
+    const over = pOver >= 0.5;
+    add({ pk:g.pk, kind:"k", pid, team:ownId, need, line, over,
+          gs:(S.pitchers[pid] || {}).gs,
+          p:over ? pOver : 1 - pOver,
+          label:lastName((S.pitchers[pid] || {}).name) + (over ? " over " : " under ")
+            + line.toFixed(1) + " strikeouts",
           detail:"projected " + k.exp.toFixed(1) });
   }
 
@@ -5611,6 +5697,8 @@ function legsFor(g){
   for(const mu of bestBats(g).concat(benchBats(g))){
     if(mu.tonight == null || mu.batterId == null) continue;
     add({ pk:g.pk, kind:"hr", pid:mu.batterId, team:mu.team, p:mu.tonight,
+          pa:mu.pa, posted:mu.posted, tba:mu.tba,
+          moved:mu.raw > 0 ? Math.abs(mu.raw - mu.tonight) / mu.raw : null,
           label:lastName(mu.batter) + " home run",
           detail:"1 per " + Math.round(1 / mu.blended) + " PA" });
   }
@@ -5628,7 +5716,7 @@ function legsFor(g){
        know how often he plays. That understates his rate on a night he is in the
        lineup and overstates the chance he is in it at all. The two pull opposite
        ways and neither is measured, which is the weakest leg here. */
-    add({ pk:g.pk, kind:"sb", pid:r.id, team:tid,
+    add({ pk:g.pk, kind:"sb", pid:r.id, team:tid, posted:!!lu,
           p:1 - Math.exp(-r.sb / games),
           label:lastName(r.name) + " to steal",
           detail:r.sb + " in " + games + " games"
@@ -5807,7 +5895,11 @@ function settleParlayLive(){
       const b = S.box[boxKey(leg.pk, leg.pid)];
       if(!b) continue;
       if(leg.kind === "k" && pitchedIn(b) && b.pK != null && b.pK >= leg.need){
-        leg.clear = true; leg.actual = b.pK + " K"; changed = true;
+        /* Strikeouts only go up, so clearing the line settles an over for good
+           and kills an under for good. Neither can reverse; an under still
+           standing is not safe until he leaves the mound. */
+        if(leg.over === false) leg.dead = true; else leg.clear = true;
+        leg.actual = b.pK + " K"; changed = true;
       } else if(leg.kind === "hr" && b.todayHr > 0){
         leg.clear = true; leg.actual = b.todayHr + " HR"; changed = true;
       } else if(leg.kind === "sb" && b.batSb > 0){
@@ -5838,7 +5930,11 @@ function settleParlayFromBox(pk, box){
       } else if(leg.kind === "k"){
         if(!pitchedIn(b)){ leg.void = true; leg.actual = "did not pitch"; changed = true; continue; }
         const k = b.pK != null ? b.pK : 0;
-        leg.hit = k >= leg.need; leg.actual = k + " K";
+        /* Legs written before the line existed carried only a floor, and an
+           absent `over` reads as the over it always was. */
+        const cleared = k >= leg.need;
+        leg.hit = leg.over === false ? !cleared : cleared;
+        leg.actual = k + " K";
         changed = true;
       }
     }
@@ -5876,6 +5972,205 @@ function parlaySummary(rec){
            settled:done.length === live.length && live.length > 0,
            landed:done.length === live.length && hit === live.length && live.length > 0,
            joint:live.reduce((n, l) => n * l.p, 1) };
+}
+
+/* ---------------- how much evidence is behind a number ----------------
+
+   Not a grade of the bet. Grading a bet needs a price to compare against, and
+   this app has none — the odds it displays are converted from its own
+   probability, so an "edge" computed here would be the model measured against
+   itself and would read zero forever. An app that showed a confident letter with
+   nothing behind it would be doing the one thing this record exists to prevent.
+
+   What can be graded is the evidence, and every input is already measured:
+
+     the component      strikeouts miss by about two and are the best-calibrated
+                        thing here; run totals measure no better than guessing the
+                        league average, and a leg drawn from one is worth less
+                        trust than a leg drawn from the other, whatever its stated
+                        probability says
+     the sample         a bat with two hundred plate appearances is weaker
+                        evidence than one with six hundred
+     the lineup         posted, or the pick made blind hours early
+     the starter        confirmed, or a league-average stand-in filling in
+     the correction     how far the record had to move the raw number, since a
+                        number that needed a large correction is a number the app
+                        was recently wrong about
+
+   Each is a deduction from a full mark, so the letter has an arithmetic behind it
+   and a one-line reason that names whichever deduction was largest. */
+const GRADE_BASE = {
+  k:    0,     // strikeouts: the best-calibrated component in the record
+  ml:   0.6,   // sides: ahead of the home-field baseline, but barely
+  hr:   0.8,   // homers: measured, corrected, still the shakiest of the bats
+  hit:  0.5,
+  run:  0.5,
+  sb:   1.4,   // steals: the app cannot see whether a runner starts
+  runs: 1.6    // run totals: no better than a flat guess, by its own calibration
+};
+
+function evidence(o){
+  if(!o || !o.kind) return null;
+  let cost = GRADE_BASE[o.kind] != null ? GRADE_BASE[o.kind] : 0.8;
+  const why = [];
+  const hit = (c, reason) => { if(c > 0){ cost += c; why.push([c, reason]); } };
+  if(GRADE_BASE[o.kind] >= 1.4) why.push([GRADE_BASE[o.kind], "the weakest component in the record", "kind"]);
+  else if(GRADE_BASE[o.kind] >= 0.8) why.push([GRADE_BASE[o.kind], "from a component that runs middling", "kind"]);
+
+  if(o.pa != null) hit(o.pa >= 500 ? 0 : o.pa >= 300 ? 0.4 : o.pa >= 150 ? 0.9 : 1.5,
+    o.pa + " plate appearances is a thin sample");
+  if(o.gs != null) hit(o.gs >= 15 ? 0 : o.gs >= 8 ? 0.5 : 1.1,
+    "only " + o.gs + " starts on file");
+  /* An unposted lineup costs a little rather than a lot, because it is the normal
+     state of the world: lineups appear three or four hours before first pitch, so
+     a card built in the morning has every bat unposted. Charging 0.7 for it meant
+     the grade was mostly reporting what time of day it was. Posting a lineup is
+     now a small bonus in effect rather than its absence being a large penalty. */
+  if(o.posted === false) hit(0.3, "the lineup is not posted yet");
+  if(o.tba === true) hit(1.0, "the opposing starter has not been named");
+  if(o.moved != null) hit(o.moved >= 0.35 ? 1.0 : o.moved >= 0.15 ? 0.5 : 0,
+    "the record moved this number by " + Math.round(o.moved * 100) + "%");
+  /* Sides and run totals are club-level, so nothing above touched them and every
+     such leg drew the same letter every night — a label rather than a
+     measurement. What varies is how confident the projection is: a pick at 51%
+     is one the model cannot separate, whatever component it came from. */
+  if(o.p != null){
+    const edge = Math.abs(o.p - 0.5);
+    hit(edge >= 0.12 ? 0 : edge >= 0.06 ? 0.4 : 0.8,
+      edge >= 0.06 ? "a modest separation" : "the model barely separates this one");
+  }
+
+  const letter = cost <= 0.5 ? "A" : cost <= 1.2 ? "B" : cost <= 2.2 ? "C" : "D";
+  /* The component's own weakness is a property of the kind, not of this pick, and
+     it is already implied by what the row says it is. So the reason prefers
+     whatever is specific to tonight — an unposted lineup, a thin sample, an
+     unnamed arm — and falls back to the component only when nothing else is
+     wrong. Otherwise every steal leg reads "the weakest component" whether or not
+     the app knows the runner is starting, which is the one thing that
+     distinguishes them. */
+  /* Only deductions that actually cost something get to explain the letter. A
+     0.4 mark against a leg that still grades B should not be the sentence under
+     it, or the row reads worse than the letter says. */
+  const specific = why.filter(w => w[2] !== "kind" && w[0] >= 0.5);
+  const pick = specific.length ? specific : why;
+  pick.sort((a, b) => b[0] - a[0]);
+  return { letter, cost, why:pick.length ? pick[0][1] : "everything on file and in sample" };
+}
+
+/* The arc is written once and used twice: the trail is that path stroked, and
+   the ball rides the same path via offset-path, so the two can never disagree
+   about where the ball went. */
+const MOON_ARC = "M34 50 C 110 4, 210 4, 296 30";
+
+const MOONSHOT = '<svg class="moon" viewBox="0 0 320 62" preserveAspectRatio="xMidYMid meet"'
+  + ' role="img" aria-label="A batter driving a ball over the wall">'
+  /* Back wall and the crowd behind it, so the arc has something to clear. */
+  + '<rect class="crowd" x="238" y="8" width="82" height="30" rx="3"/>'
+  + '<path class="wall" d="M238 38 L238 12"/>'
+  + '<path class="ground" d="M0 52 L320 52"/>'
+  /* The batter: a stub of a body and a bat that swings through. */
+  /* Head, torso, and two legs in a stance — small, but enough that it reads as a
+     person rather than a lollipop at 78 pixels tall. */
+  + '<circle class="body" cx="24" cy="33" r="3.4"/>'
+  + '<path class="limb" d="M24 37 L24 44"/>'
+  + '<path class="limb" d="M24 44 L20 52"/>'
+  + '<path class="limb" d="M24 44 L29 52"/>'
+  + '<path class="bat" d="M24 40 L38 30"/>'
+  + '<path class="trail" d="' + MOON_ARC + '"/>'
+  + '<circle class="ball" style="offset-path:path(\'' + MOON_ARC + '\')"/>'
+  + '</svg>';
+
+/* Three bats worth looking at first, each chosen by a different question.
+
+   The leaderboard lists every club in schedule order and leaves you to scan
+   sixty rows for what stands out. This says which three are interesting and why
+   each one is here — the likeliest to go deep, the likeliest to reach base at
+   all, and the one whose matchup has moved him furthest from his own baseline.
+
+   Three different criteria on purpose. Ranking everything by one number would
+   just be the top of the leaderboard again, and the third question in particular
+   is one no ranking answers: not "who is best" but "who is most improved by
+   tonight", which is a genuinely different bat most nights.
+
+   Nothing here is recorded. These are the same picks already on the cards below,
+   surfaced rather than duplicated — a named pick is graded once, in the record,
+   whether or not it also appears here. */
+function highlightBats(games){
+  const all = [];
+  for(const g of games) for(const b of bestBats(g).concat(benchBats(g))){
+    if(b.batterId == null) continue;
+    /* How much tonight has moved him from his own season rate. The conditions,
+       the arm and the platoon are all already inside `adjusted`; `blended` is
+       what he does ordinarily. A ratio, so a modest hitter in a good spot can
+       outrank a great one in a neutral spot, which is the point of asking. */
+    b.lift = b.blended > 0 && b.adjusted > 0 ? b.adjusted / b.blended : 1;
+    all.push(b);
+  }
+  if(all.length < 3) return null;
+  const best = (key, dir) => all.slice().sort((a, b) =>
+    (dir === "up" ? b[key] - a[key] : a[key] - b[key]))[0];
+
+  const power = best("tonight", "up");
+  /* Distinct names, so the block never says the same man three times. By name as
+     well as by id: a doubleheader puts the same player in two games with two
+     different ids for the pick, and both would otherwise be eligible. */
+  const seen = {};
+  const claim = b => { seen[b.batterId] = true; seen["n:" + b.batter] = true; return b; };
+  const free = () => all.filter(b => !seen[b.batterId] && !seen["n:" + b.batter]);
+  claim(power);
+  const contact = free().sort((a, b) => (b.pHit || 0) - (a.pHit || 0))[0];
+  if(!contact) return null;
+  claim(contact);
+  const matchup = free().sort((a, b) => b.lift - a.lift)[0];
+  if(!matchup) return null;
+  return { power, contact, matchup };
+}
+
+function highlightBlock(games){
+  const h = highlightBats(games);
+  if(!h) return "";
+  const pct = v => v == null ? "\u2014" : Math.round(v * 100) + "%";
+  const why = b => {
+    const bits = [];
+    if(b.hr != null) bits.push(b.hr + " HR");
+    if(b.side && b.hand) bits.push(b.side + " v " + b.hand + "HP");
+    if(b.pitcher) bits.push("v " + lastName(b.pitcher));
+    return bits.join(" \u00b7 ");
+  };
+  const cell = (tag, b, figure, label, kind) => {
+    const ev = evidence({ kind, pa:b.pa, posted:b.posted, tba:b.tba,
+      p:kind === "hit" ? b.pHit : b.tonight,
+      moved:b.raw != null && b.tonight != null && b.raw > 0
+        ? Math.abs(b.raw - b.tonight) / b.raw : null });
+    return '<div class="hcard">'
+    + '<span class="htag">' + tag + '</span>'
+    + '<div class="hname">'
+      + '<span class="tbar" style="background:' + col(b.team) + '" aria-hidden="true"></span>'
+      + esc(lastName(b.batter)) + '</div>'
+    + '<div class="hfig"><b>' + figure + '</b><span>' + label + '</span>'
+      + (ev ? '<span class="hgrade g' + ev.letter + '" title="'
+          + esc(ev.why) + '">' + ev.letter + '</span>' : "")
+    + '</div>'
+    + '<div class="hwhy">' + esc(why(b)) + '</div>'
+    + (ev ? '<div class="hwhy ev">' + esc(ev.why) + '</div>' : "")
+    + '</div>';
+  };
+
+  return MOONSHOT
+    + '<h2 class="eyebrow">Three to look at first</h2>'
+    + '<div class="hgrid">'
+      + cell("Most likely to go deep", h.power, pct(h.power.tonight), "home run", "hr")
+      + cell("Most likely to reach", h.contact, pct(h.contact.pHit), "a hit", "hit")
+      + cell("Best matchup tonight", h.matchup,
+          (h.matchup.lift >= 1 ? "+" : "") + Math.round((h.matchup.lift - 1) * 100) + "%",
+          "against his own rate", "hr")
+    + '</div>'
+    + '<p class="note">Three questions rather than one ranking: the biggest home run '
+    + 'chance, the biggest chance of a hit, and the bat the night has moved furthest from '
+    + 'its own season rate \u2014 conditions, the arm faced and the handedness matchup all '
+    + 'together. That last one is not a claim he is the best bat on the slate, only that '
+    + 'tonight suits him most. All three are already named on the cards below; this is '
+    + 'where to start, not an extra set of picks.</p>';
 }
 
 /* Three more bats per club, beyond the two already named below in the game
@@ -5944,6 +6239,8 @@ function parlayBlock(){
   const legRow = leg => {
     /* A leg decided with the game still on gets the same glyph at reduced
        weight: settled and merely certain are not quite the same thing. */
+    const ev = evidence({ kind:leg.kind, pa:leg.pa, gs:leg.gs, p:leg.p,
+      posted:leg.posted, tba:leg.tba, moved:leg.moved });
     const mark = leg.void ? ["t", "\u2013"]
       : leg.hit != null ? (leg.hit ? ["y", "\u2713"] : ["n", "\u2717"])
       : leg.clear ? ["y prov", "\u2713"]
@@ -5957,6 +6254,7 @@ function parlayBlock(){
     const fixture = leg.aid && leg.hid
       ? side(leg.aid) + ' at ' + side(leg.hid) : "";
     const bits = [fixture, leg.shared ? "shares this game" : "", esc(leg.detail),
+                  ev ? esc(ev.why) : "",
                   leg.actual ? esc(leg.actual) : "",
                   leg.hit == null && leg.clear ? "already clear" : "",
                   leg.hit == null && leg.dead ? "already gone" : ""].filter(Boolean);
@@ -5964,7 +6262,9 @@ function parlayBlock(){
       + '<span class="cdmark ' + mark[0] + '">' + mark[1] + '</span>'
       + '<span class="cdwho">' + esc(leg.label)
         + '<em>' + bits.join(" \u00b7 ") + '</em></span>'
-      + '<span class="cdout"><b>' + Math.round(leg.p * 100) + '%</b></span>'
+      + '<span class="cdout"><b>' + Math.round(leg.p * 100) + '%</b>'
+        + (ev ? '<i class="cdgrade g' + ev.letter + '">' + ev.letter + '</i>' : "")
+        + '</span>'
       + '</div>';
   };
 
@@ -6015,6 +6315,18 @@ function parlayBlock(){
             + 'way to size it, so it is disclosed rather than adjusted. Never the same '
             + 'market twice on one game \u2014 that would be one pick written twice.</p>'
           : "")
+      + '<p class="note"><b>The letter is not a rating of the bet.</b> Rating a bet needs '
+      + 'a price to compare against, and this app has none \u2014 the odds it shows are '
+      + 'converted from its own probability, so any \u201cedge\u201d would be the model '
+      + 'measured against itself and would read zero forever. The letter grades the '
+      + 'evidence instead: which component the leg comes from and how that component '
+      + 'grades out in the record below, how much of a season stands behind the player, '
+      + 'whether the lineup is posted and the opposing starter named, and how far the '
+      + 'calibration had to move the raw number. A strikeout leg on a confirmed starter '
+      + 'earns an A; a homer leg on a two-hundred-plate-appearance bat facing an unnamed '
+      + 'arm earns a C, and the row says which of those cost it the most. A high '
+      + 'percentage with a low letter is a number the app believes but cannot yet '
+      + 'support.</p>'
       + '<p class="note">Every leg is the app\u2019s own number, recorded before first '
       + 'pitch and graded below. The figure at the top is their product: the chance all '
       + (s.n === 1 ? "of it lands" : "of them land") + ' together, which is the only '
@@ -6405,6 +6717,7 @@ function renderPlays(){
   const card = upcoming.length
     ? '<h2 class="eyebrow">Today\'s card \u00b7 ' + upcoming.length + ' games</h2>'
       + (waiting ? '<p class="load">Loading starters\u2026</p>' : "")
+      + highlightBlock(upcoming)
       + leaderboardBlock(upcoming)
       + upcoming.map(cardBlock).join("")
       + '<p class="note"><b>Test these before trusting them.</b> The calibration on the '
