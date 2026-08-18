@@ -737,7 +737,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "131 — the grade\u2019s wording matches the number it is about";
+const BUILD = "141 \u2014 run legs stop treating a game total as Poisson";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -2545,10 +2545,29 @@ const watchList = e => Array.isArray(e.watches) ? e.watches : (e.watch ? [e.watc
    wrong but not broken. */
 async function loadRosters(){
   const yr = new Date().getFullYear();
-  /* Two maps from one request. The person record carries batSide and the app was
-     reading the id and throwing the rest away — which is why the bat pick had
-     nothing that could tell one team-mate from another on a given night. */
+  /* Two maps: which club a player is on, and which side he bats from. Between
+     them they carry the trade filter and the entire platoon term, so when this
+     comes back empty the app quietly loses both — no handedness on any row, no
+     split applied, and traded players left under their old club. It read zero in
+     the wild while every other fetch worked, which is the argument for not
+     depending on a single endpoint shape.
+
+     The players list is tried first: one request, every player in the league,
+     each with a current club and a batting side, and a flatter shape than a
+     hydrate. The team hydrate stays as the fallback. */
   const out = {}, bats = {};
+  const take = (pid, tid, side) => {
+    if(!pid) return;
+    if(tid && T[tid]) out[pid] = tid;
+    if(side) bats[pid] = side;
+  };
+  try{
+    const pj = await getJSON(MLB + "/sports/1/players?season=" + yr);
+    for(const p of (pj && pj.people) || [])
+      take(p.id, (p.currentTeam || {}).id, (p.batSide || {}).code);
+    if(Object.keys(bats).length > 200) return { club:out, bats };
+  }catch(e){}
+
   let j;
   try{
     j = await getJSON(MLB + "/teams?sportId=1&season=" + yr + "&hydrate=roster(person)");
@@ -4617,6 +4636,18 @@ function renderToday(){
     + 'thinner air lifts a home run rate, and how much a wind blowing out does. Both are '
     + 'stated in the source, both are damped, and neither has been tested against a '
     + 'result. Treat the percentage as the app showing its working, not as a price.</p>'
+    /* A silent failure is worse than a missing feature. When the roster request
+       comes back empty the app loses handedness entirely — no platoon term on any
+       bat, and the measured splits cannot be applied either, since they are keyed
+       by which side a man bats from. Nothing on screen said so; the rows simply
+       stopped carrying "L v RHP" and the picks quietly got blunter. */
+    + (!Object.keys(S.bats || {}).length
+        ? '<p class="note"><b>Handedness is not loaded.</b> The roster request came back '
+          + 'empty, so no bat pick carries a platoon term tonight and the measured splits '
+          + 'cannot be applied either \u2014 they are keyed by which side a man bats from. '
+          + 'The picks are otherwise sound; they are blind to the one thing that usually '
+          + 'separates two team-mates. The footer shows it as bats 0.</p>'
+        : "")
     + '<p class="note">A starter\'s line can carry a "reads as" tag \u2014 swing-and-miss '
     + 'stuff, sharp control, typically goes deep \u2014 built from his K/9, BB/9 and '
     + 'innings per start against the league average of starters currently loaded. This is '
@@ -5948,11 +5979,25 @@ function normCdf(z){
 /* The app's own measured error on a game total, in runs, preferring the season
    replay over the live record because it has a thousand games rather than twenty.
    Null when neither has run. */
+/* How far a game total actually lands from a projection.
+
+   Measured where there is a measurement, and otherwise a stated constant rather
+   than nothing. Returning null sent the caller to a Poisson tail, and runs are
+   not Poisson: they cluster into big innings, so the real spread of game totals
+   is roughly four and a half runs while sqrt(mean) on a projection of 5.7 gives
+   2.4. That difference turned an honest 80% into a stated 94% — a number the app
+   had no business being that sure of, on the component its own record ranks last.
+
+   Every measurement this app has ever taken of it, across two full calibration
+   runs and the live record, has put the mean absolute error near 3.6 runs, which
+   is a standard deviation near 4.5. That is the fallback. */
+const RUN_SD = 4.5;
+
 function runSpread(){
   if(S.cal && S.cal.with && S.cal.with.runMAE) return S.cal.with.runMAE * 1.2533;
   const s = scorecardSummary();
   if(s && s.runMAE && s.totN >= 20) return s.runMAE * 1.2533;
-  return null;
+  return RUN_SD;
 }
 
 /* Every leg this app can honestly offer on one game. */
@@ -5989,10 +6034,11 @@ function legsFor(g){
        game total at appreciably more than that, and using the measured figure
        roughly halves the confidence. Claiming Poisson precision for a projection
        known to miss by four runs would be the least honest number in the app. */
+    /* Always a normal tail on a measured spread now. runSpread no longer returns
+       null, so the Poisson branch that used to sit here is gone: it modelled runs
+       as independent arrivals, which is exactly what they are not. */
     const sd = runSpread();
-    const pOver = sd
-      ? 1 - normCdf((line - tot.total) / sd)
-      : poissonAtLeast(Math.ceil(line), tot.total);
+    const pOver = 1 - normCdf((line - tot.total) / sd);
     add({ pk:g.pk, kind:"runs", line, over, p:over ? pOver : 1 - pOver,
           label:(over ? "Over " : "Under ") + line.toFixed(1) + " runs",
           /* "projected 7.0 \u00b1 5.0 measured" reads as 7 plus 5, which is over the
