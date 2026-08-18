@@ -361,11 +361,15 @@ ul{margin:0;padding:0;list-style:none;}
    app, so a phone set to reduce motion gets the scene holding still with the
    ball at the wall, which still reads as what it is. */
 .moon{display:block;width:100%;height:88px;margin:2px 0 4px;overflow:hidden;}
+/* Paused while it is not on screen. A loop that runs forever costs a phone
+   something for a picture nobody is looking at, and browsers throttle background
+   tabs but not an element scrolled out of a visible page. */
+.moon.rest *{animation-play-state:paused !important;}
 .moon .ground{stroke:#22434A;stroke-width:1;}
 .moon .dirt{fill:none;stroke:#1B3138;stroke-width:1;}
 .moon .wall{fill:#0E1F24;stroke:#22434A;stroke-width:1;}
-.moon .cap{stroke:var(--bulb);stroke-width:1.4;opacity:.5;stroke-linecap:round;}
-.moon .pole{stroke:var(--bulb);stroke-width:1.2;opacity:.4;stroke-linecap:round;}
+.moon .cap{stroke:var(--tint,var(--bulb));stroke-width:1.4;opacity:.5;stroke-linecap:round;}
+.moon .pole{stroke:var(--tint,var(--bulb));stroke-width:1.2;opacity:.4;stroke-linecap:round;}
 .moon .fan{fill:#2C4C54;}
 .moon .body{fill:#5B7378;}
 .moon .limb{stroke:#5B7378;stroke-width:2.2;stroke-linecap:round;fill:none;}
@@ -378,10 +382,10 @@ ul{margin:0;padding:0;list-style:none;}
    apart the ball outran its own streak, which is the sort of thing only a frame
    grab catches. 271 is the measured length of the arc; a wrong number here shows
    as a trail that stops short or never finishes. */
-.moon .arc{fill:none;stroke:var(--bulb);stroke-width:1.2;stroke-linecap:round;
+.moon .arc{fill:none;stroke:var(--tint,var(--bulb));stroke-width:1.2;stroke-linecap:round;
   stroke-dasharray:271;stroke-dashoffset:271;opacity:0;
   animation:draw 4.4s cubic-bezier(.22,.62,.4,1) infinite;}
-.moon .comet{fill:none;stroke:var(--bulb);stroke-width:2.2;stroke-linecap:round;
+.moon .comet{fill:none;stroke:var(--tint,var(--bulb));stroke-width:2.2;stroke-linecap:round;
   stroke-dasharray:22 300;stroke-dashoffset:22;opacity:0;
   animation:comet 4.4s cubic-bezier(.22,.62,.4,1) infinite;}
 .moon .ball{fill:var(--chalk);r:3.2;opacity:0;
@@ -820,7 +824,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, bpLgHr9:null, runDef:{}, lgCs:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, bpLgHr9:null, runDef:{}, lgCs:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, splits:{}, lgSplit:null, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, leadOpen:false, feedTradeSeen:null, star:null, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -2141,6 +2145,90 @@ function batPickGaps(g){
   return out;
 }
 
+/* ---------------- measured platoon splits ----------------
+
+   Every batter has been getting the same damped guess: plus or minus twelve per
+   cent on power depending on the handedness matchup, scaled by whether he bats
+   left or right. That is the league's average effect applied to everyone, which
+   is right on average and wrong about every individual.
+
+   MLB publishes the real thing — each hitter's line against left-handed and
+   right-handed pitching — and it costs one request per side.
+
+   It cannot be used raw, and this is the important part. A right-handed regular
+   sees about 150 plate appearances against lefties in a season; at a true .240
+   that carries a 95% range from .172 to .308. Published work puts the point where
+   a batter's platoon split stabilises near two thousand plate appearances, which
+   is several seasons. A single year of splits is mostly noise, and a model that
+   believed them would name whoever got lucky against lefties in April.
+
+   So the measured split is regressed hard toward the league effect. A hitter with
+   a genuinely large sample and a genuinely large split moves; everyone else stays
+   near the constant, which is the league effect and is what the app already used.
+   The regression constant is the sample size at which a split is trusted half —
+   set to a full season's worth against the short side, deliberately heavy. */
+const SPLIT_REGRESS = 400;
+const SPLIT_MIN_PA = 40;
+
+async function loadSplits(){
+  const yr = new Date().getFullYear();
+  const out = {};
+  /* One request per side. sitCodes accepts both in one call on some builds of
+     this API and not others, so they are fetched separately — two requests is a
+     smaller price than a shape that silently returns only one of them. */
+  for(const [code, key] of [["vl", "vl"], ["vr", "vr"]]){
+    let j;
+    try{
+      j = await getJSON(MLB + "/stats?stats=statSplits&sitCodes=" + code
+        + "&group=hitting&season=" + yr + "&sportId=1&limit=1500");
+    }catch(e){ continue; }
+    /* The response has been shaped two ways across versions: one block with every
+       split in it, or one block per split. Both are walked. */
+    const blocks = (j && j.stats) || [];
+    for(const b of blocks){
+      for(const sp of (b.splits || [])){
+        const pid = ((sp.player || {}).id);
+        const st = sp.stat || {};
+        const pa = Number(st.plateAppearances) || 0;
+        if(!pid || !pa) continue;
+        const rec = out[pid] || (out[pid] = {});
+        rec[key] = { pa, hr:Number(st.homeRuns) || 0, h:Number(st.hits) || 0 };
+      }
+    }
+  }
+  return out;
+}
+
+/* The league's own platoon effect, computed from the same data rather than
+   assumed — so the thing individual splits are regressed toward is measured too.
+   Keyed by the batter's hand, because a left-hander's platoon split is larger
+   than a right-hander's and always has been. */
+function leagueSplit(){
+  if(S.lgSplit) return S.lgSplit;
+  const acc = { L:{ same:{hr:0,pa:0}, opp:{hr:0,pa:0} },
+                R:{ same:{hr:0,pa:0}, opp:{hr:0,pa:0} } };
+  for(const pid in S.splits){
+    const side = S.bats[pid];
+    if(side !== "L" && side !== "R") continue;
+    const r = S.splits[pid];
+    /* "Same" is a left-hander against a lefty, or a right-hander against a
+       righty: the disadvantaged matchup in both cases. */
+    const same = side === "L" ? r.vl : r.vr;
+    const opp  = side === "L" ? r.vr : r.vl;
+    if(same){ acc[side].same.hr += same.hr; acc[side].same.pa += same.pa; }
+    if(opp){  acc[side].opp.hr  += opp.hr;  acc[side].opp.pa  += opp.pa; }
+  }
+  const out = {};
+  for(const side of ["L", "R"]){
+    const a = acc[side];
+    if(a.same.pa < 5000 || a.opp.pa < 5000) continue;
+    const sameRate = a.same.hr / a.same.pa, oppRate = a.opp.hr / a.opp.pa;
+    if(sameRate > 0 && oppRate > 0) out[side] = { same:sameRate, opp:oppRate };
+  }
+  S.lgSplit = Object.keys(out).length ? out : null;
+  return S.lgSplit;
+}
+
 /* The one thing that can tell two team-mates apart on a given night.
 
    Everything else the bat pick weighs — the opposing starter, the bullpen behind
@@ -2167,12 +2255,42 @@ const WATCH_PER_CLUB = 2;
    rather than reusing the homer figure, which would have overstated them. */
 const CONTACT_PLATOON = 0.5;
 
-function platoonMult(batSide, pitchHand, scaleBy){
+function platoonMult(batSide, pitchHand, scaleBy, pid){
   if(!batSide || !pitchHand) return 1;
   const swing = PLATOON_SWING * (scaleBy == null ? 1 : scaleBy);
   if(batSide === "S") return 1 + swing * 0.25;   // always takes the better side
   const scale = batSide === "L" ? 1 : 0.75;
-  return 1 + (batSide !== pitchHand ? swing : -swing) * scale;
+  /* The league effect, which is what this function has always returned. */
+  const assumed = 1 + (batSide !== pitchHand ? swing : -swing) * scale;
+
+  const rec = pid != null ? S.splits[pid] : null;
+  const lg = leagueSplit();
+  if(!rec || !lg || !lg[batSide]) return assumed;
+  const facing = pitchHand === "L" ? rec.vl : rec.vr;
+  const other  = pitchHand === "L" ? rec.vr : rec.vl;
+  if(!facing || !other) return assumed;
+  if(facing.pa < SPLIT_MIN_PA || other.pa < SPLIT_MIN_PA) return assumed;
+
+  /* His own rate in this matchup against his own rate overall, both measured.
+     Regressed toward the league effect by SPLIT_REGRESS plate appearances, so a
+     hitter with 120 trips against lefties barely moves off the constant and one
+     with a full career's worth moves most of the way to his own number. */
+  const ownPa = facing.pa + other.pa, ownHr = facing.hr + other.hr;
+  if(!ownPa || !ownHr) return assumed;
+  const overall = ownHr / ownPa;
+  const inThis = facing.hr / facing.pa;
+  if(!(overall > 0)) return assumed;
+  const measured = inThis / overall;
+
+  const w = facing.pa / (facing.pa + SPLIT_REGRESS);
+  const blended = w * measured + (1 - w) * assumed;
+  /* Damped like every other multiplier here, and by the same amount, so a wild
+     split cannot swing a pick further than the arm faced can. */
+  const capped = Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, blended));
+  /* Contact splits are roughly half the size of power splits, and scaleBy is how
+     the caller asks for that. Applied to the distance from neutral. */
+  const k = scaleBy == null ? 1 : scaleBy;
+  return 1 + (capped - 1) * k;
 }
 
 /* Who is actually in the lineup, when MLB has published it. */
@@ -2181,6 +2299,41 @@ function lineupIds(g, teamId){
   if(!lu) return null;
   const arr = teamId === g.hid ? lu.home : teamId === g.aid ? lu.away : null;
   return Array.isArray(arr) && arr.length ? arr : null;
+}
+
+/* Where a man bats, and what that is worth.
+
+   MLB returns the posted lineup in batting order and the app was reading it only
+   for membership — is he playing, yes or no — and then giving every hitter the
+   same flat 4.3 plate appearances. A leadoff man gets about 4.65 and a nine-hole
+   hitter about 3.85, which is 21% more trips to the plate, and it moves a homer
+   chance by four points before anything about the matchup is considered.
+
+   It is also the input that changes most from day to day. A season rate barely
+   moves; a batting order moves whenever the manager feels like it, and it is
+   published a few hours before first pitch. So this is where a card sharpens once
+   the lineups land, rather than staying the guess it was in the morning.
+
+   The slope is the league's own shape — roughly a tenth of a plate appearance per
+   slot — and it is applied only where a lineup is actually posted. Before that
+   everyone gets the flat figure, which is what the app has always done. */
+function slotOf(g, teamId, playerId){
+  const lu = lineupIds(g, teamId);
+  if(!lu) return null;
+  const i = lu.indexOf(playerId);
+  return i < 0 ? null : i;
+}
+
+/* 1st, 2nd, 3rd, then th. Written out because `+` binds tighter than `||` and
+   the one-line version of this silently produced "bats 1" for the leadoff man. */
+function ordinal(n){
+  const suffix = n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th";
+  return n + suffix;
+}
+
+function paForSlot(slot){
+  if(slot == null) return PA_PER_GAME;
+  return Math.max(3.4, 4.65 - Math.min(8, slot) * 0.10);
 }
 
 /* The league's opponent batting average among the starters on file, so a hit
@@ -2247,10 +2400,11 @@ function rankedBats(g, batTeam, oppPid, oppTeam, cond){
     const r = watchRate(b);
     const side = S.bats[b.id] || null;
     const hand = known ? p.hand : null;
-    const plat = platoonMult(side, hand);
-    const platC = platoonMult(side, hand, CONTACT_PLATOON);
+    const plat = platoonMult(side, hand, 1, b.id);
+    const platC = platoonMult(side, hand, CONTACT_PLATOON, b.id);
+    const slot = slotOf(g, batTeam, b.id);
     ranked.push({ score:r.rate * plat * hr9, batter:b.name, batterId:b.id, team:batTeam,
-                  perPA:b.perPA, hr:b.hr, pa:b.pa,
+                  perPA:b.perPA, hr:b.hr, pa:b.pa, slot, paTonight:paForSlot(slot),
                   hRate:b.pa > 0 ? (b.h || 0) / b.pa : 0,
                   rRate:b.pa > 0 ? (b.r || 0) / b.pa : 0, platC,
                   pitcher:known ? p.name : null,
@@ -2258,6 +2412,10 @@ function rankedBats(g, batTeam, oppPid, oppTeam, cond){
                   tba:!known, posted:!!lu, blended:r.rate, form:r.form });
   }
   if(!ranked.length) return [];
+  /* Ranked on the chance over tonight's trips, not on the rate alone. Two bats at
+     the same rate are not the same pick when one leads off and the other bats
+     ninth, and before this the order could not tell them apart. */
+  for(const b of ranked) b.score = b.score * (b.paTonight / PA_PER_GAME);
   ranked.sort((a, b) => b.score - a.score);
   /* The arm belongs in the number, not only in the ranking. HR/9 decided which
      bat was named and then played no part in how likely he was to go deep, so
@@ -2291,14 +2449,18 @@ function rankedBats(g, batTeam, oppPid, oppTeam, cond){
     const mult = (cond ? cond.mult : 1) * armMult * (chosen.plat || 1);
     return Object.assign(chosen, { cond, armMult,
       adjusted:chosen.blended * mult,
-      raw:gameProb(chosen.blended * mult),
-      tonight:calibrateBat(gameProb(chosen.blended * mult)),
+      /* Over the trips he will actually get, which the batting order settles. */
+      raw:gameProb(chosen.blended * mult, chosen.paTonight),
+      tonight:calibrateBat(gameProb(chosen.blended * mult, chosen.paTonight)),
       /* Both scaled by the platoon edge as well, since handedness bears on
          contact as much as on power. */
       pHit:calibrateMarket("hit",
-        gameProb(chosen.hRate * hitMult * (chosen.platC || 1))),
+        gameProb(chosen.hRate * hitMult * (chosen.platC || 1), chosen.paTonight)),
+      /* A run needs someone behind him to drive him in, so the nine-hole penalty
+         is real twice over — fewer trips, and the worst hitters following. That
+         second part is not modelled; only the trips are. */
       pRun:calibrateMarket("run",
-        gameProb(chosen.rRate * runMult * (chosen.platC || 1))) });
+        gameProb(chosen.rRate * runMult * (chosen.platC || 1), chosen.paTonight)) });
   });
 }
 
@@ -2355,8 +2517,8 @@ function benchBats(g){
    Storing this with each pick is what lets the record say how many homers were
    expected, and so whether a lean stretch is a bad picker or a bad fortnight. */
 const PA_PER_GAME = 4.3;
-const gameProb = rate =>
-  rate > 0 && rate < 1 ? 1 - Math.pow(1 - rate, PA_PER_GAME) : null;
+const gameProb = (rate, pa) =>
+  rate > 0 && rate < 1 ? 1 - Math.pow(1 - rate, pa == null ? PA_PER_GAME : pa) : null;
 const hrGameProb = gameProb;   // the same arithmetic, named for its first use
 
 const watchOf = mu => Object.assign(
@@ -2794,6 +2956,21 @@ function tradeForcesRefresh(){
   return true;
 }
 
+/* Runs the animation only while it is in view. IntersectionObserver where it
+   exists, and where it does not the scene simply keeps looping, which is what it
+   did before. Re-attached after every render because render() rebuilds the whole
+   tab and the old node is gone. */
+let moonWatch = null;
+function watchMoon(){
+  const el = document.querySelector(".moon");
+  if(!el || typeof IntersectionObserver !== "function") return;
+  if(moonWatch) moonWatch.disconnect();
+  moonWatch = new IntersectionObserver(entries => {
+    for(const e of entries) e.target.classList.toggle("rest", !e.isIntersecting);
+  }, { rootMargin:"80px" });
+  moonWatch.observe(el);
+}
+
 /* Refetched when the tab is opened and the last read is more than ten minutes
    old. Loading once per session would leave a news feed frozen. */
 const FEED_TTL = 10 * 60 * 1000;
@@ -3126,6 +3303,7 @@ async function loadDetail(){
     S.pitchers = {}; S.bullpens = {}; S.bpLg = null; S.bpLgHr9 = null;
     S.runDef = {}; S.lgCs = null;
     S.rosters = {}; S.bats = {}; S.hitters = {}; S.teamBat = {}; S.runners = {};
+    S.splits = {}; S.lgSplit = null;
   }
   S.detailState = "loading";
   render();
@@ -3158,6 +3336,11 @@ async function loadDetail(){
       S.diag.rosters = Object.keys(S.rosters).length;
       S.diag.bats = Object.keys(S.bats).length;
     }
+    /* Splits ride with the hitters: same cadence, same expiry, and useless
+       without them. */
+    S.splits = await loadSplits() || {};
+    S.lgSplit = null;
+    S.diag.splits = Object.keys(S.splits).length;
     const hit = await loadHitters(S.rosters) || {};
     /* Defensive on the way in as well, so a future change to loadHitters cannot
        reintroduce the same failure. */
@@ -5343,7 +5526,8 @@ function cardBlock(g){
               && Math.abs(mu.raw - mu.tonight) >= 0.02
               ? ' \u00b7 was ' + Math.round(mu.raw * 100) + '%' : "")
           + (mu.side && mu.hand ? ' \u00b7 ' + mu.side + ' v ' + mu.hand + 'HP' : "")
-          + (mu.posted ? ' \u00b7 in the lineup' : "")
+          + (mu.slot != null ? ' \u00b7 bats ' + ordinal(mu.slot + 1)
+              : mu.posted ? ' \u00b7 in the lineup' : "")
           + '</span>'
         + '</div>').join("")
     + batPickGaps(g).map(tid => '<div class="cbrow">'
@@ -6283,6 +6467,10 @@ function noteStar(pk, date, box, teams){
   S.star = { date, pk, id:Number(best.id), name:b.name, score:bestScore,
     hr:b.todayHr || 0, h:b.batH || 0, r:b.batR || 0, sb:b.batSb || 0,
     line:b.today || null,
+    /* Which side he bats from, so the scene can put him there. Read now rather
+       than at render time: the roster map can be cleared and refetched between
+       the night he did it and the morning you look. */
+    side:S.bats ? (S.bats[Number(best.id)] || null) : null,
     team:b.side === "home" ? teams.home : teams.away };
   try{ localStorage.setItem(STAR_KEY, JSON.stringify(S.star)); }catch(e){}
   return true;
@@ -6305,6 +6493,15 @@ const MOON_ARC = "M36 56 C 112 4, 216 4, 296 31";
    on any morning before a box score has been read. */
 function moonshot(){
   const st = S.star;
+  /* A left-hander stands on the other side of the plate and pulls the other way,
+     so the whole scene is mirrored rather than the figure alone — batter, arc,
+     wall and crowd all swap ends. A switch hitter is drawn right-handed, which is
+     a coin toss rather than a claim.
+
+     Mirrored with a transform on the group instead of a second set of
+     coordinates: one geometry to get right, and the arc length the dash values
+     depend on is unchanged by a reflection. */
+  const lefty = st && st.side === "L";
   /* Math.min(3, undefined) is NaN, and a NaN loop bound draws no balls at all —
      an empty sky where the animation should be. Coerced and floored so a missing
      or nonsensical homer count still shows one. */
@@ -6316,18 +6513,26 @@ function moonshot(){
     ? esc(lastName(st.name)) + ' \u00b7 ' + esc(st.line || ((st.h || 0) + " hits"))
       + (st.team ? ' \u00b7 ' + ab(st.team) : "")
     : null;
-  let out = MOON_OPEN;
+  /* His club's colour, where there is one. The rest of the app already colours
+     every row by team; the one picture in it was the exception. */
+  const tint = st && st.team ? col(st.team) : null;
+  let out = MOON_OPEN(lefty, tint);
   for(let i = 0; i < balls; i++)
     out += '<circle class="ball" style="offset-path:path(\'' + MOON_ARC + '\');'
       + 'animation-delay:' + (i * 0.24).toFixed(2) + 's"/>';
-  out += '</svg>';
+  out += '</g></svg>';
+  /* Outside the svg, so a left-hander's caption is not reflected with the park. */
   return out + (label
     ? '<p class="moonwho"><span>Yesterday\u2019s best line</span>' + label + '</p>'
     : "");
 }
 
-const MOON_OPEN = '<svg class="moon" viewBox="0 0 320 74" preserveAspectRatio="xMidYMid meet"'
-  + ' role="img" aria-label="A batter driving a ball over the outfield wall">'
+const MOON_OPEN = (lefty, tint) => '<svg class="moon" viewBox="0 0 320 74"'
+  + ' preserveAspectRatio="xMidYMid meet" role="img"'
+  + ' aria-label="A batter driving a ball over the outfield wall">'
+  /* One reflection about the centre line flips the whole park. */
+  + '<g' + (lefty ? ' transform="translate(320,0) scale(-1,1)"' : "")
+    + (tint ? ' style="--tint:' + tint + '"' : "") + '>'
   /* Back to front, and the order matters: the stands are a filled block first,
      then the crowd sits on top of it. Drawn the other way round the block covered
      every one of them and the seats read as an empty box. */
@@ -6340,7 +6545,7 @@ const MOON_OPEN = '<svg class="moon" viewBox="0 0 320 74" preserveAspectRatio="x
   /* A shallow infield edge. An arc of radius 46 across this width climbed to the
      top of the frame and read as a dome over the batter's head. */
   + '<path class="dirt" d="M10 58 Q 52 48, 94 58"/>'
-  /* Head, torso and two legs in a stance — small, but enough that it reads as a
+  /* Head, torso and two legs in a stance \u2014 small, but enough that it reads as a
      person rather than a lollipop at this size. */
   + '<circle class="body" cx="26" cy="36" r="3.4"/>'
   + '<path class="limb" d="M26 40 L26 48"/>'
@@ -7139,7 +7344,7 @@ function render(resetScroll){
     + 'Odds simulated in this browser from the records above.<br>'
     + 'Build ' + BUILD
     + (Object.keys(S.diag).length
-        ? '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","spHistory","rosters","bats","hitters","hitterForm"]
+        ? '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","spHistory","rosters","bats","splits","hitters","hitterForm"]
             .filter(k => S.diag[k] != null)
             .map(k => k + ' ' + S.diag[k]).join(' \u00b7 ')
         : "")
@@ -7151,6 +7356,8 @@ function render(resetScroll){
     const back = app.querySelector(fk);
     if(back && back.focus) back.focus({ preventScroll:true });
   }
+  /* The scene is a fresh node after every render, so the observer follows it. */
+  watchMoon();
   announce();
 }
 
