@@ -480,6 +480,30 @@ ul{margin:0;padding:0;list-style:none;}
   padding:1px 4px;border-radius:2px;border:1px solid currentColor;vertical-align:2px;}
 .gA{color:var(--grass);} .gB{color:var(--bulb);}
 .gC{color:#C89B5A;} .gD{color:var(--blush);}
+/* Batted balls, newest first. One chip a plate appearance, tinted by what came
+   of it, with the measurement underneath where the feed carried one. */
+.swings{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));
+  gap:7px;padding:2px 14px 16px;}
+.swing{background:var(--deep);border:1px solid var(--line);border-radius:5px;
+  padding:8px 9px 7px;}
+.swing.hit{border-color:rgba(93,168,110,.5);}
+.swing.hr{border-color:var(--bulb);background:rgba(214,158,46,.07);}
+.swtop{margin-bottom:2px;}
+.swtop span{font-family:var(--mono);font-size:8.5px;color:#5B7378;}
+/* The event gets its own line. Sharing one with the date meant "Home Run" and a
+   distance both truncated on a narrow chip, and the two things a home run row
+   most needs to say were the two being cut. */
+.swev{font-size:10.5px;color:var(--slate);margin-bottom:5px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.swnum{display:flex;align-items:baseline;gap:4px;flex-wrap:wrap;}
+.swnum b{font-family:var(--display);font-size:21px;line-height:1;color:var(--chalk);}
+.swnum span{font-size:9px;color:#738E93;}
+.swnum i{font-style:normal;font-family:var(--mono);font-size:9px;color:#5B7378;
+  margin-left:2px;}
+.swnum.dim span{font-family:var(--mono);font-size:9px;}
+/* A tappable name should look like one. */
+.cbval[data-player]{cursor:pointer;}
+.cbval[data-player]:hover{color:#fff;}
 .worst{background:var(--deep);border:1px solid var(--line);border-radius:5px;
   padding:10px 12px 8px;margin-top:11px;}
 .worsttitle{font-family:var(--mono);font-size:8.5px;letter-spacing:.09em;
@@ -737,7 +761,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "141 \u2014 run legs stop treating a game total as Poisson";
+const BUILD = "143 \u2014 tap a bat to see what he has actually hit";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -824,7 +848,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, bpLgHr9:null, runDef:{}, lgCs:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, splits:{}, lgSplit:null, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, bpLgHr9:null, runDef:{}, lgCs:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, splits:{}, lgSplit:null, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, player:null, swingData:{}, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, leadOpen:false, feedTradeSeen:null, star:null, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -2392,7 +2416,11 @@ function rankedBats(g, batTeam, oppPid, oppTeam, cond){
   /* The whole pool, not the first eight of it. The stored array is ordered by
      home run total for the display above; slicing it here threw away exactly
      the high-rate bats the union was widened to include. */
+  /* A man on the injured list has no chance at all, which is a fact rather than a
+     probability, and the app already had it. */
+  const out = unavailable();
   const pool = (S.hitters[batTeam] || [])
+    .filter(b => !out[b.id])
     .filter(b => !lu || lu.indexOf(b.id) >= 0);
   const ranked = [];
   for(const b of pool){
@@ -2924,6 +2952,38 @@ async function loadFeed(){
   // Newest first; MLB returns them oldest first.
   merged.sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
   return merged;
+}
+
+/* Who the transactions feed says is unavailable.
+
+   The app has been printing an injured man's home run chance while the Feed tab,
+   two taps away, carried MLB's own notice that he had been placed on the injured
+   list. Nothing connected them: the Feed flagged moves that touched a pick, but a
+   pick never asked the Feed anything.
+
+   Walked oldest to newest so a placement followed by an activation leaves a man
+   available again — the same player can go on the list and come off it inside the
+   window, and only the last word counts. Multi-player entries carry every id, so
+   a trade that folded several notices into one row still resolves each of them.
+
+   What this cannot see: a man placed on the list before the feed's window opens,
+   about twelve days. That is a real gap, and the lineup filter closes it a few
+   hours before first pitch. This closes the morning, which is when the card is
+   built. */
+function unavailable(){
+  const out = {};
+  const feed = (S.feed || []).slice().sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : (a.id || 0) - (b.id || 0));
+  for(const e of feed){
+    const tag = (e.kind || {}).tag;
+    if(tag !== "injured" && tag !== "back" && tag !== "sent down") continue;
+    const ids = [e.pid].concat(e.pids || []).filter(Boolean);
+    for(const id of ids){
+      if(tag === "back") delete out[id];
+      else out[id] = tag === "injured" ? "on the injured list" : "sent down";
+    }
+  }
+  return out;
 }
 
 /* Every player the app is currently naming, and in what capacity.
@@ -5361,6 +5421,117 @@ function rangeBar(o){
     + '<span>' + HI + '</span></div></div>';
 }
 
+/* ---------------- a player's recent work ----------------
+
+   Opened by tapping a named bat, and only then. The batted-ball detail needs the
+   play-by-play for each game he appeared in, which is five to ten requests for
+   one man — fine on demand, impossible for the sixty bats the card names. So
+   nothing here is fetched until someone asks for it.
+
+   MLB's play-by-play carries a hitData object on batted balls: launch speed,
+   launch angle, distance and where it landed. That is Statcast measurement
+   arriving through the same free feed the rest of the app uses. I had previously
+   told this project it was out of reach, which was wrong — Baseball Savant has no
+   public API, and I took that to mean the numbers were unavailable, when the
+   league's own play-by-play has been carrying them the whole time.
+
+   Written to expect the field and survive without it: if hitData is absent the
+   sheet still lists what he did, just without the speeds. */
+async function loadSwings(pid, teamId){
+  const key = String(pid);
+  if(S.swingData[key]) return S.swingData[key];
+  const out = { rows:[], hasHit:false, at:Date.now() };
+  /* His club's last games, newest first, capped so a tap cannot become a flood. */
+  const mine = (S.finals || []).filter(f => f.hid === teamId || f.aid === teamId)
+    .slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 8);
+  for(const f of mine){
+    let pbp;
+    try{ pbp = await getJSON(MLB + "/game/" + f.pk + "/playByPlay"); }
+    catch(e){ continue; }
+    for(const play of (pbp && pbp.allPlays) || []){
+      const bat = (play.matchup || {}).batter || {};
+      if(bat.id !== pid) continue;
+      const res = play.result || {};
+      if(!res.event) continue;
+      /* The measured ball is on one of the play's events, not the play itself. */
+      let hd = null;
+      for(const ev of (play.playEvents || [])) if(ev.hitData) hd = ev.hitData;
+      out.rows.push({
+        date:f.date, event:res.event,
+        speed:hd && hd.launchSpeed != null ? Number(hd.launchSpeed) : null,
+        angle:hd && hd.launchAngle != null ? Number(hd.launchAngle) : null,
+        dist:hd && hd.totalDistance != null ? Number(hd.totalDistance) : null,
+        pitcher:((play.matchup || {}).pitcher || {}).fullName || null
+      });
+      if(hd) out.hasHit = true;
+    }
+    if(out.rows.length >= 14) break;
+  }
+  out.rows = out.rows.slice(0, 14);
+  S.swingData[key] = out;
+  return out;
+}
+
+/* Which of these counts as squared up. Not Statcast's barrel, which has a
+   specific definition over a speed-and-angle region this does not reproduce —
+   this is the plainer question of whether it was hit hard and in the air, and it
+   is labelled as that rather than borrowing a word that means something else. */
+const hardHit = r => r.speed != null && r.speed >= 95;
+const inAir = r => r.angle != null && r.angle >= 8 && r.angle <= 40;
+
+function playerSheet(){
+  const ps = S.player;
+  if(!ps) return "";
+  const d = S.swingData[String(ps.id)];
+  const rows = d ? d.rows : null;
+
+  const chip = r => {
+    const hr = /home run/i.test(r.event);
+    const hit = hr || /single|double|triple/i.test(r.event);
+    return '<div class="swing' + (hr ? " hr" : hit ? " hit" : "") + '">'
+      + '<div class="swtop"><span>' + esc(r.date.slice(5)) + '</span></div>'
+      + '<div class="swev">' + esc(r.event) + '</div>'
+      + (r.speed != null
+          ? '<div class="swnum"><b>' + r.speed.toFixed(0) + '</b><span>mph</span>'
+            + (r.angle != null ? '<i>' + (r.angle > 0 ? "+" : "") + r.angle.toFixed(0)
+                + '\u00b0</i>' : "")
+            + (r.dist != null && hr ? '<i>' + r.dist.toFixed(0) + ' ft</i>' : "")
+            + '</div>'
+          : '<div class="swnum dim"><span>no measurement</span></div>')
+      + '</div>';
+  };
+
+  let body;
+  if(!d) body = '<p class="load">Reading his last games\u2026</p>';
+  else if(!rows.length) body = '<p class="note">No plate appearances found in his '
+    + 'club\u2019s recent games. He may not have played, or the play-by-play for those '
+    + 'games is not available.</p>';
+  else {
+    const measured = rows.filter(r => r.speed != null);
+    const hard = measured.filter(hardHit).length;
+    const air = measured.filter(r => hardHit(r) && inAir(r)).length;
+    body = (measured.length
+        ? '<div class="stats">'
+          + '<div><b>' + rows.length + '</b><span>plate appearances</span></div>'
+          + '<div><b>' + hard + '</b><span>hit 95+ mph</span></div>'
+          + '<div><b>' + air + '</b><span>hard and in the air</span></div></div>'
+          + '<p class="note">Over ' + measured.length + ' measured balls, which is far too '
+          + 'few to read as a rate. This is what he did, not what he does \u2014 it plays no '
+          + 'part in any pick on the card.</p>'
+        : "")
+      + '<div class="swings">' + rows.map(chip).join("") + '</div>';
+  }
+
+  return '<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-modal="true"'
+    + ' tabindex="-1" aria-label="' + esc(ps.name) + ' recent work">'
+    + '<div class="shandle"></div>'
+    + '<header class="shead" style="border-color:' + col(ps.team) + '"><div>'
+    + '<p class="eyebrow tight">' + esc(ab(ps.team)) + ' \u00b7 recent work</p>'
+    + '<h3>' + esc(ps.name) + '</h3></div>'
+    + '<button class="x" id="closeSheet" aria-label="Close">\u2715</button></header>'
+    + body + '</div></div>';
+}
+
 function renderSheet(){
   const t = S.teams[S.sheet]; if(!t) return "";
   const id = t.id, o = (S.odds && S.odds[id]) || null, d = DIV[t.div];
@@ -5526,7 +5697,10 @@ function cardBlock(g){
     + bats.map(mu => '<div class="cbrow">'
         + '<span class="cblabel">Watch</span>'
         + '<span class="tbar" style="background:' + col(mu.team) + '" aria-hidden="true"></span>'
-        + '<span class="cbval wrap">' + esc(lastName(mu.batter))
+        + '<span class="cbval wrap"' + (mu.batterId
+            ? ' data-player="' + mu.batterId + '" data-pteam="' + mu.team
+              + '" data-pname="' + esc(mu.batter) + '" role="button" tabindex="0"'
+            : "") + '>' + esc(lastName(mu.batter))
           + (mu.tonight != null
               ? ' <b>' + Math.round(mu.tonight * 100) + '%</b>'
               : "")
@@ -6096,7 +6270,9 @@ function legsFor(g){
     /* Every runner on the club's list, not only its leader. Offering one
        candidate a club meant the league's top base stealer was the top steal leg
        every single night, because he was the only name allowed to compete. */
+    const outSb = unavailable();
     for(const r of (S.runners[tid] || [])){
+    if(outSb[r.id]) continue;
     if(lu && lu.indexOf(r.id) < 0) continue;
     /* Steals per team game, not per game he started, because the app does not
        know how often he plays. That understates his rate on a night he is in the
@@ -7395,7 +7571,7 @@ function render(resetScroll){
             .map(k => k + ' ' + S.diag[k]).join(' \u00b7 ')
         : "")
     + '</footer>'
-    + (S.sheet ? renderSheet() : "");
+    + (S.player ? playerSheet() : S.sheet ? renderSheet() : "");
 
   if(keep) window.scrollTo(0, keep);
   if(fk){
@@ -7436,7 +7612,7 @@ function focusSheet(){
 }
 function closeSheet(){
   const back = S.sheetReturn;
-  S.sheet = null; S.swing = null; S.sheetReturn = null;
+  S.sheet = null; S.swing = null; S.player = null; S.sheetReturn = null;
   render();
   if(back){
     const el = document.getElementById("app").querySelector(back);
@@ -7538,10 +7714,23 @@ document.addEventListener("click", e => {
     return;
   }
 
+  const who = e.target.closest("[data-player]");
+  if(who){
+    S.sheetReturn = focusKey(document.activeElement);
+    S.player = { id:Number(who.dataset.player), team:Number(who.dataset.pteam),
+                 name:who.dataset.pname };
+    S.sheet = null; S.swing = null;
+    render();
+    focusSheet();
+    /* The requests start now, not when the card was drawn. */
+    loadSwings(S.player.id, S.player.team).then(render);
+    return;
+  }
+
   const team = e.target.closest("[data-team]");
   if(team){
     S.sheetReturn = focusKey(document.activeElement);   // so it can go back
-    S.sheet = Number(team.dataset.team); S.swing = null;
+    S.sheet = Number(team.dataset.team); S.swing = null; S.player = null;
     render();
     focusSheet();
     return;
