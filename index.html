@@ -761,7 +761,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "143 \u2014 tap a bat to see what he has actually hit";
+const BUILD = "144 \u2014 the injury feed loads for the picks, not just its own tab";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -3050,8 +3050,14 @@ function watchMoon(){
   moonWatch.observe(el);
 }
 
-/* Refetched when the tab is opened and the last read is more than ten minutes
-   old. Loading once per session would leave a news feed frozen. */
+/* Refetched when the last read is more than ten minutes old. Loading once per
+   session would leave a news feed frozen.
+
+   It is no longer only the Feed tab that needs this. Since the picks began
+   excluding players the feed says are on the injured list, an unread feed means
+   an unfiltered card — and the feed was loading only when its own tab was opened,
+   so a card built on the Plays tab named injured men exactly as before. The list
+   is an input now, not just a page. */
 const FEED_TTL = 10 * 60 * 1000;
 async function ensureFeed(){
   if(S.feedState === "loading") return;
@@ -6325,6 +6331,13 @@ function buildParlay(date){
     && existing.legs.every(l => l.hit == null && !l.clear && !l.dead && !l.void
                                 && sched[String(l.pk)]);
   if(existing && !openStill) return existing;
+  /* A leg naming a man the feed now says is out is not a prediction that has aged
+     badly, it is one made without information that existed. Replacing it before a
+     pitch is thrown is not revision with hindsight — the alternative is carrying a
+     number everyone can see is zero. Only while nothing has started, which the
+     check above already guarantees. */
+  const sidelined = unavailable();
+  const stale = existing && (existing.legs || []).some(l => l.pid && sidelined[l.pid]);
   if(games.length < 3) return existing || null;
   const all = [];
   for(const g of games) for(const leg of legsFor(g)) all.push(leg);
@@ -6396,7 +6409,7 @@ function buildParlay(date){
   /* Only replaced by something more varied. Once every kind the slate offers is
      represented, the card settles and stops moving. */
   const kinds = ls => new Set(ls.map(l => l.kind)).size;
-  if(existing && kinds(legs) <= kinds(existing.legs)
+  if(existing && !stale && kinds(legs) <= kinds(existing.legs)
      && legs.length <= existing.legs.length) return existing;
   const joint = legs.reduce((n, l) => n * l.p, 1);
   const rec = { date, at:new Date().toISOString(), legs, joint, built:legs.length };
@@ -7457,6 +7470,9 @@ function keepTheRecord(){
   S.games.filter(g => g.date === today && g.st === "sched")
     .forEach(recordPrediction);
   buildParlay(today);
+  /* Before anything is written down, since a pick made without it can name a man
+     who is out. */
+  ensureFeed();
   settleScorecard();
   settleParlay();
   settleParlayLive();
@@ -7626,7 +7642,7 @@ document.addEventListener("click", e => {
     S.tab = tab.dataset.tab;
     if(S.tab === "odds") ensureSeason();   // the forecast wants the real fixture list
     if(S.tab === "plays"){ ensureSeason(); loadDetail(); }
-    if(S.tab === "feed") ensureFeed();
+    ensureFeed();
     render(true);
     return;
   }
