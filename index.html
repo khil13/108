@@ -504,6 +504,10 @@ ul{margin:0;padding:0;list-style:none;}
 /* A tappable name should look like one. */
 .cbval[data-player]{cursor:pointer;}
 .cbval[data-player]:hover{color:#fff;}
+/* The reasoning sits under its leg, quieter than the pick and the number but
+   above the grade's note, because it answers the first question a reader has. */
+.cdwhy{grid-column:2 / -1;font-size:11px;color:var(--slate);line-height:1.45;
+  margin-top:3px;}
 .worst{background:var(--deep);border:1px solid var(--line);border-radius:5px;
   padding:10px 12px 8px;margin-top:11px;}
 .worsttitle{font-family:var(--mono);font-size:8.5px;letter-spacing:.09em;
@@ -761,7 +765,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "144 \u2014 the injury feed loads for the picks, not just its own tab";
+const BUILD = "145 \u2014 every leg says which term decided it";
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -3831,30 +3835,39 @@ function project(g){
   const lg = p => Math.log(p / (1 - p));
 
   let d = HFA;
-  let usedTeam = false;
+  let usedTeam = false, teamTerm = 0;
   if(USE_TEAM){
-    d += lg(teamRate(h, REGRESS_GAME)) - lg(teamRate(a, REGRESS_GAME));
+    teamTerm = lg(teamRate(h, REGRESS_GAME)) - lg(teamRate(a, REGRESS_GAME));
+    d += teamTerm;
     usedTeam = true;
   }
 
   const hp = S.pitchers[g.hProbId], ap = S.pitchers[g.aProbId];
   const hEra = starterEra(hp), aEra = starterEra(ap);
-  let usedSP = false, usedBP = false;
+  let usedSP = false, usedBP = false, spTerm = 0, bpTerm = 0;
   if(hEra != null && aEra != null){
     const gap = Math.max(-SP_CAP, Math.min(SP_CAP, aEra - hEra));
-    d += SP_WEIGHT * gap;
+    spTerm = SP_WEIGHT * gap;
+    d += spTerm;
     usedSP = true;
   }
 
   const homeBp = S.bullpens[g.hid], awayBp = S.bullpens[g.aid];
   if(homeBp && awayBp){
     const gap = Math.max(-BP_CAP, Math.min(BP_CAP, awayBp.era - homeBp.era));
-    d += BP_WEIGHT * gap;
+    bpTerm = BP_WEIGHT * gap;
+    d += bpTerm;
     usedBP = true;
   }
 
   const pHome = 1 / (1 + Math.exp(-d));
-  return { pHome, pAway:1 - pHome, usedTeam, usedSP, usedBP };
+  /* Every term kept rather than thrown away once summed, so the card can say
+     which of them actually decided the number. The three are on one scale — log
+     odds — so they are directly comparable and the largest is genuinely the
+     reason. */
+  return { pHome, pAway:1 - pHome, usedTeam, usedSP, usedBP,
+           terms:{ home:HFA, team:teamTerm, starters:spTerm, bullpens:bpTerm },
+           hEra, aEra, hName:hp && hp.name, aName:ap && ap.name };
 }
 
 /* Fair American odds. The two sides sum to 100%, so unlike a real book there
@@ -6200,6 +6213,7 @@ function legsFor(g){
     const homeFav = pHome >= 0.5;
     const team = homeFav ? g.hid : g.aid;
     add({ pk:g.pk, kind:"ml", team, p:Math.max(pHome, 1 - pHome),
+          terms:pr.terms, hEra:pr.hEra, aEra:pr.aEra, hName:pr.hName, aName:pr.aName,
           label:ab(team) + " to win", detail:"moneyline" });
   }
 
@@ -6220,6 +6234,13 @@ function legsFor(g){
     const sd = runSpread();
     const pOver = 1 - normCdf((line - tot.total) / sd);
     add({ pk:g.pk, kind:"runs", line, over, p:over ? pOver : 1 - pOver,
+          /* The league's figure for a whole game, since the projection is one.
+             Comparing a total against a per-team average read as a three-run gap
+             where there was none. */
+          /* Doubled, because leagueRunsPerGame is runs per team and the
+             projection is a whole game. Undoubled it read "2.7 runs below the
+             league's 4.5" for a projection of 7.2, which is neither figure. */
+          proj:tot.total, lg:lgTot * 2, usedSP:tot.usedSP,
           label:(over ? "Over " : "Under ") + line.toFixed(1) + " runs",
           /* "projected 7.0 \u00b1 5.0 measured" reads as 7 plus 5, which is over the
              line rather than under it. Plain words cannot be mistaken for a sum. */
@@ -6246,6 +6267,7 @@ function legsFor(g){
     const over = pOver >= 0.5;
     add({ pk:g.pk, kind:"k", pid, team:ownId, need, line, over,
           gs:(S.pitchers[pid] || {}).gs,
+          k9:k.k9, ipStart:k.ip, oppK:k.oppKRate, lgK:leagueKRate(),
           p:over ? pOver : 1 - pOver,
           label:lastName((S.pitchers[pid] || {}).name) + (over ? " over " : " under ")
             + line.toFixed(1) + " strikeouts",
@@ -6265,6 +6287,8 @@ function legsFor(g){
     if(mu.tonight == null || mu.batterId == null) continue;
     add({ pk:g.pk, kind:"hr", pid:mu.batterId, team:mu.team, p:mu.tonight,
           pa:mu.pa, posted:mu.posted, tba:mu.tba,
+          perPA:mu.blended ? 1 / mu.blended : mu.perPA, armMult:mu.armMult,
+          plat:mu.plat, condMult:mu.cond ? mu.cond.mult : null, slot:mu.slot,
           label:lastName(mu.batter) + " home run",
           detail:"1 per " + Math.round(1 / mu.blended) + " PA" });
   }
@@ -6296,6 +6320,7 @@ function legsFor(g){
       ? Math.max(1 - ARM_SWING, Math.min(1 + ARM_SWING, (1 - csRate) / (1 - S.lgCs)))
       : 1;
     add({ pk:g.pk, kind:"sb", pid:r.id, team:tid, posted:!!lu,
+          sbRate:r.sb / games, csRate:csRate, lgCs:S.lgCs,
           p:1 - Math.exp(-(r.sb / games) * csMult),
           label:lastName(r.name) + " to steal",
           detail:r.sb + " in " + games + " games"
@@ -6561,6 +6586,93 @@ function parlaySummary(rec){
            settled:done.length === live.length && live.length > 0,
            landed:done.length === live.length && hit === live.length && live.length > 0,
            joint:live.reduce((n, l) => n * l.p, 1) };
+}
+
+/* ---------------- why this pick ----------------
+
+   The card has always shown its inputs — projected 5.4, 1 per 14 PA, TEX throws
+   out 21% — and left the reader to work out which of them mattered. That is fine
+   for one leg and useless across eight, because the number that decided a pick is
+   rarely the one that catches the eye.
+
+   So each leg names the term that actually moved it. Everything here is read from
+   values the projection already computed and kept; nothing is re-derived, and
+   nothing is invented for the sentence. Where the honest answer is that nothing
+   much moved it, it says so, because a leg at 55% off a coin-flip matchup should
+   read as one. */
+function legWhy(leg){
+  const bits = [];
+  const pct = v => Math.round(v * 100) + "%";
+
+  if(leg.kind === "ml" && leg.terms){
+    /* All four are log odds, so the biggest is genuinely the reason. */
+    const t = leg.terms, side = leg.team === leg.hid ? 1 : -1;
+    const named = [
+      ["home field", t.home * side],
+      ["the season records", (t.team || 0) * side],
+      ["the starting pitchers", (t.starters || 0) * side],
+      ["the bullpens", (t.bullpens || 0) * side]
+    ].filter(x => x[1] > 0.02).sort((a, b) => b[1] - a[1]);
+    if(!named.length) return "nothing in the matchup separates these two";
+    bits.push("mostly " + named[0][0]);
+    if(named[1]) bits.push("then " + named[1][0]);
+    if(leg.hEra != null && leg.aEra != null && Math.abs(leg.hEra - leg.aEra) >= 0.5)
+      bits.push((leg.team === leg.hid ? leg.hName : leg.aName) + " is the better arm by "
+        + Math.abs(leg.hEra - leg.aEra).toFixed(2) + " of ERA");
+  }
+
+  else if(leg.kind === "runs"){
+    if(leg.lg != null && leg.proj != null){
+      /* Which side of the league figure it actually falls on, not which side of
+         the line the leg took. Those agree most of the time and the sentence was
+         only ever right by coincidence. */
+      const dir = leg.proj >= leg.lg ? "above" : "below";
+      const gap = Math.abs(leg.proj - leg.lg);
+      bits.push(gap < 0.4
+        ? "this projects level with the league's " + leg.lg.toFixed(1) + " a game"
+        : "this projects " + gap.toFixed(1) + " runs " + dir
+          + " the league's " + leg.lg.toFixed(1));
+    }
+    if(leg.usedSP) bits.push("the starters are in that figure");
+    else bits.push("neither starter is on file, so this is team rates alone");
+  }
+
+  else if(leg.kind === "k"){
+    if(leg.k9 != null) bits.push(leg.k9.toFixed(1) + " per nine");
+    if(leg.ipStart != null) bits.push("about " + leg.ipStart.toFixed(1) + " innings a start");
+    if(leg.oppK != null && leg.lgK != null){
+      const d = leg.oppK - leg.lgK;
+      if(Math.abs(d) >= 0.012)
+        bits.push("against a lineup that strikes out " + pct(leg.oppK)
+          + ", " + (d > 0 ? "above" : "below") + " the league's " + pct(leg.lgK));
+    }
+  }
+
+  else if(leg.kind === "hr"){
+    if(leg.perPA) bits.push("one every " + Math.round(leg.perPA) + " trips");
+    if(leg.armMult != null && Math.abs(leg.armMult - 1) >= 0.06)
+      bits.push("the arm he faces gives up "
+        + (leg.armMult > 1 ? "more" : "fewer") + " than most");
+    if(leg.plat != null && Math.abs(leg.plat - 1) >= 0.06)
+      bits.push(leg.plat > 1 ? "the handedness favours him" : "the handedness is against him");
+    if(leg.condMult != null && Math.abs(leg.condMult - 1) >= 0.06)
+      bits.push(leg.condMult > 1 ? "the air and wind help" : "the air and wind hold it down");
+    if(leg.slot != null && leg.slot <= 2) bits.push("and he bats " + ordinal(leg.slot + 1));
+  }
+
+  else if(leg.kind === "sb"){
+    if(leg.sbRate != null) bits.push(leg.sbRate.toFixed(2) + " steals a game this season");
+    if(leg.csRate != null)
+      bits.push("against a club throwing out " + pct(leg.csRate)
+        + (leg.lgCs != null
+            ? ", " + (leg.csRate > leg.lgCs ? "better" : "worse") + " than the league's "
+              + pct(leg.lgCs) : ""));
+    if(!leg.posted) bits.push("and no lineup yet, so it is not known that he starts");
+  }
+
+  if(!bits.length) return null;
+  const t = bits.join(" \u00b7 ");
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 /* ---------------- how much evidence is behind a number ----------------
@@ -6950,6 +7062,7 @@ function parlayBlock(){
        weight: settled and merely certain are not quite the same thing. */
     const ev = evidence({ kind:leg.kind, pa:leg.pa, gs:leg.gs, p:leg.p,
       posted:leg.posted, tba:leg.tba });
+    const why = legWhy(leg);
     const mark = leg.void ? ["t", "\u2013"]
       : leg.hit != null ? (leg.hit ? ["y", "\u2713"] : ["n", "\u2717"])
       : leg.clear ? ["y prov", "\u2713"]
@@ -6974,6 +7087,8 @@ function parlayBlock(){
       + '<span class="cdout"><b>' + Math.round(leg.p * 100) + '%</b>'
         + (ev ? '<i class="cdgrade g' + ev.letter + '">' + ev.letter + '</i>' : "")
         + '</span>'
+      /* Why this one, in the app's own terms. */
+      + (why ? '<span class="cdwhy">' + esc(why) + '</span>' : "")
       + '</div>';
   };
 
