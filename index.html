@@ -520,12 +520,12 @@ ul{margin:0;padding:0;list-style:none;}
 .phead{font-family:var(--mono);font-size:8.5px;letter-spacing:.09em;
   text-transform:uppercase;color:var(--grass);margin:10px 0 4px;}
 .phead.warn{color:var(--bulb);}
-.prow{display:grid;grid-template-columns:150px 1fr;gap:10px;padding:4px 0;
+.provrow{display:grid;grid-template-columns:150px 1fr;gap:10px;padding:5px 0;
   align-items:baseline;}
-.prow + .prow{border-top:1px solid rgba(34,67,74,.4);}
-.prow span{font-size:11.5px;color:var(--chalk);}
-.prow em{font-style:normal;font-size:10.5px;color:var(--slate);line-height:1.4;}
-@media(max-width:420px){ .prow{grid-template-columns:1fr;gap:1px;} }
+.provrow + .provrow{border-top:1px solid rgba(34,67,74,.4);}
+.provrow span{font-size:11.5px;color:var(--chalk);}
+.provrow em{font-style:normal;font-size:10.5px;color:var(--slate);line-height:1.45;}
+@media(max-width:460px){ .provrow{grid-template-columns:1fr;gap:2px;} }
 /* The one place in the app allowed to look pleased. Bordered in the accent
    rather than the line colour, and it appears once. */
 .cheer{background:linear-gradient(180deg,rgba(214,158,46,.10),rgba(214,158,46,.02));
@@ -846,7 +846,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "151 \u2014 a playoff bracket, and the app says what failed to load";
+const BUILD = "152 \u2014 three fixes your screenshots found";
 /* The number on its own, for stamping predictions. A build string is prose and
    changes shape; this is what the record splits on. */
 const BUILD_N = 147;
@@ -7051,9 +7051,16 @@ function gradeBlock(){
     + '<em>' + Math.round(100 * r.exp / r.n) + '%</em>'
     + '<em>' + (r.hit - r.exp >= 0 ? "+" : "\u2212")
       + Math.abs(r.hit - r.exp).toFixed(1) + '</em></div>';
+  /* Per leg, so a grade with more legs is not flattered by the comparison. */
   const gap = r => Math.abs(r.hit - r.exp) / r.n;
   const best = rows.slice().sort((a, b) => gap(a) - gap(b))[0];
   const worst = rows.slice().sort((a, b) => gap(b) - gap(a))[0];
+  /* The claim is that the letters run in order, not merely that the first beats
+     the last. Comparing only best against worst declared success on A 0.060,
+     B 0.020, C 0.070 — B closest, C furthest, "B" before "C", verdict passed —
+     when A, the grade that asserts the most, was not closest at all. */
+  const ordered = rows.every((r, i) => i === 0 || gap(rows[i - 1]) <= gap(r) + 1e-9);
+  const aBest = rows.length && best.letter === rows[0].letter;
   return '<h4 class="swhead">Does the letter mean anything?</h4>'
     + '<div class="builds">'
     + '<div class="brow head"><span>grade</span><em>legs</em><em>landed</em><em>said</em><em>gap</em></div>'
@@ -7063,10 +7070,15 @@ function gradeBlock(){
     + 'grade lands as often as it claimed. '
     + (best && worst && best.letter !== worst.letter
         ? '<b>' + best.letter + ' is closest to its own claim and ' + worst.letter
-          + ' furthest.</b> ' + (best.letter < worst.letter
-              ? 'That is the order the letter is supposed to produce.'
-              : 'That is the wrong way round, which is evidence against the grade rather '
-                + 'than for it.')
+          + ' furthest.</b> ' + (ordered
+              ? 'The grades run in order, which is what the letter claims.'
+              : aBest
+                ? 'The highest grade is closest, but the middle of the table is out of '
+                  + 'order, so the letter is doing something rather than everything it '
+                  + 'says.'
+                : 'The order does not hold: ' + rows[0].letter + ' asserts the most and is '
+                  + 'not the closest, which is evidence against the grade rather than for '
+                  + 'it.')
         : "")
     + ' Over ' + total + ' settled legs, which is still short of a verdict.</p>';
 }
@@ -7118,8 +7130,11 @@ const PROVENANCE = [
 ];
 
 function provenanceBlock(){
+  /* provrow, not prow: the Odds tab already had a .prow for its pitcher lines,
+     with a six-column grid, and these rows silently inherited it — every label
+     crushed into a 32px column and wrapping one letter at a time. */
   const rows = k => PROVENANCE.filter(p => p.how === k).map(p =>
-    '<div class="prow"><span>' + esc(p.what) + '</span>'
+    '<div class="provrow"><span>' + esc(p.what) + '</span>'
     + '<em>' + esc(p.note) + '</em></div>').join("");
   const m = PROVENANCE.filter(p => p.how === "measured").length;
   return '<h4 class="swhead">What is measured and what is not</h4>'
@@ -8328,9 +8343,16 @@ function render(resetScroll){
           (() => {
             const want = { pitchers:"starters", bullpens:"bullpens", rosters:"rosters",
                            bats:"handedness", splits:"platoon splits", hitters:"hitters" };
+            /* Starters are only expected when a game on the board has a probable
+               named. On an off day, or before MLB posts them, an empty list is
+               the right answer and calling it a failure teaches the reader to
+               ignore this line. */
+            const wantSP = S.games.some(g => g.hProbId || g.aProbId);
             const missing = [];
-            for(const k in want)
+            for(const k in want){
+              if(k === "pitchers" && !wantSP) continue;
               if(S.diag[k] === 0 || S.diag[k] == null) missing.push(want[k]);
+            }
             return missing.length
               ? '<br><span class="miss">Did not load: ' + missing.join(", ")
                 + ' \u2014 the picks run without them.</span>'
