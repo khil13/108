@@ -39,6 +39,14 @@
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden;}
+/* No double-tap zoom. The viewport deliberately still allows pinch zoom, because
+   taking that away from someone who needs it is not a trade worth making — but
+   iOS also zooms on a quick double tap, and the page then sits wider than the
+   screen with its right-hand side clipped by the overflow rule above. It reads as
+   the app widening for no reason, and it got easier to trigger once player names
+   became tappable: an impatient second tap on a name zooms instead of doing
+   nothing. This turns off the double tap and leaves the pinch alone. */
+body{touch-action:manipulation;}
 body{background:var(--night);color:var(--chalk);font-family:var(--body);
   -webkit-font-smoothing:antialiased;min-height:100vh;}
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;}
@@ -121,7 +129,7 @@ ul{margin:0;padding:0;list-style:none;}
      standings row stretched to 1,140px leaves the club name marooned from its
      numbers, so tables keep a readable width and centre themselves. */
   .dblock,.method,.thead,.trow,.pthead,.prow,.othead,.orow,.follow,.since,
-  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk,.cdio,.leadgrp,.hgrid,.worst{
+  .sincelite,.ledger,.expandall,.disc.notes,.note,.cdday,.cdblk,.cdio,.leadgrp,.hgrid,.worst,.builds,.cheer{
     max-width:740px;margin-left:auto;margin-right:auto;}
 }
 @media(min-width:1600px){
@@ -508,6 +516,60 @@ ul{margin:0;padding:0;list-style:none;}
    above the grade's note, because it answers the first question a reader has. */
 .cdwhy{grid-column:2 / -1;font-size:11px;color:var(--slate);line-height:1.45;
   margin-top:3px;}
+.prov{margin-top:8px;}
+.phead{font-family:var(--mono);font-size:8.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--grass);margin:10px 0 4px;}
+.phead.warn{color:var(--bulb);}
+.prow{display:grid;grid-template-columns:150px 1fr;gap:10px;padding:4px 0;
+  align-items:baseline;}
+.prow + .prow{border-top:1px solid rgba(34,67,74,.4);}
+.prow span{font-size:11.5px;color:var(--chalk);}
+.prow em{font-style:normal;font-size:10.5px;color:var(--slate);line-height:1.4;}
+@media(max-width:420px){ .prow{grid-template-columns:1fr;gap:1px;} }
+/* The one place in the app allowed to look pleased. Bordered in the accent
+   rather than the line colour, and it appears once. */
+.cheer{background:linear-gradient(180deg,rgba(214,158,46,.10),rgba(214,158,46,.02));
+  border:1px solid var(--bulb);border-radius:6px;padding:4px 16px 16px;margin:12px 0 6px;
+  text-align:center;animation:rise .5s ease-out;}
+.cheer h2{font-family:var(--display);font-size:26px;letter-spacing:.01em;
+  margin:2px 0 4px;color:var(--chalk);}
+.cheerodds{font-family:var(--mono);font-size:11px;color:var(--bulb);
+  letter-spacing:.04em;margin-bottom:8px;}
+.cheerwho{font-size:12.5px;color:var(--slate);margin-bottom:10px;}
+.cheer .note{text-align:left;margin-bottom:12px;}
+.cheersvg{display:block;width:100%;height:76px;overflow:hidden;}
+/* Its own wall and ground. These classes are styled under .moon, which this
+   scene is not inside, so without them the stands drew as an unfilled black
+   rectangle sitting on top of the arcs. */
+.cheersvg .wall{fill:#0E1F24;stroke:#22434A;stroke-width:1;}
+.cheersvg .cap{stroke:var(--bulb);stroke-width:1.4;opacity:.5;stroke-linecap:round;}
+.cheersvg .ground{stroke:#22434A;stroke-width:1;fill:none;}
+.cheersvg .cheerarc{fill:none;stroke:var(--bulb);stroke-width:1.4;stroke-linecap:round;
+  stroke-dasharray:300;stroke-dashoffset:300;opacity:0;
+  animation:cheerdraw 2.6s cubic-bezier(.2,.6,.35,1) forwards;}
+.cheersvg .cheerball{fill:var(--chalk);r:3;opacity:0;
+  animation:cheerfly 2.6s cubic-bezier(.2,.6,.35,1) forwards;}
+@keyframes cheerdraw{
+  0%   { stroke-dashoffset:300; opacity:0; }
+  6%   { stroke-dashoffset:300; opacity:.6; }
+  46%  { stroke-dashoffset:0;   opacity:.6; }
+  100% { stroke-dashoffset:0;   opacity:.35; }
+}
+@keyframes cheerfly{
+  0%   { offset-distance:0%;   opacity:0; }
+  6%   { offset-distance:0%;   opacity:1; }
+  46%  { offset-distance:100%; opacity:1; }
+  56%,100%{ offset-distance:100%; opacity:0; }
+}
+.builds{background:var(--deep);border:1px solid var(--line);border-radius:5px;
+  padding:10px 12px 8px;margin-top:11px;}
+.brow{display:grid;grid-template-columns:1fr 54px 84px 54px;gap:6px;align-items:baseline;
+  padding:4px 0;}
+.brow + .brow{border-top:1px solid rgba(34,67,74,.5);}
+.brow span{font-size:11.5px;color:var(--chalk);}
+.brow em{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--slate);
+  text-align:right;}
+.brow.head em{font-size:8.5px;letter-spacing:.05em;text-transform:uppercase;color:#5B7378;}
 .worst{background:var(--deep);border:1px solid var(--line);border-radius:5px;
   padding:10px 12px 8px;margin-top:11px;}
 .worsttitle{font-family:var(--mono);font-size:8.5px;letter-spacing:.09em;
@@ -765,7 +827,10 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "145 \u2014 every leg says which term decided it";
+const BUILD = "150 \u2014 no accidental zoom, and a card in October";
+/* The number on its own, for stamping predictions. A build string is prose and
+   changes shape; this is what the record splits on. */
+const BUILD_N = 147;
 const SEASON_GAMES = 162;
 const SIMS = 5000;
 const SHEET_SIMS = 1500;
@@ -852,7 +917,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, bpLgHr9:null, runDef:{}, lgCs:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, splits:{}, lgSplit:null, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, player:null, swingData:{}, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, bpLgHr9:null, runDef:{}, lgCs:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, splits:{}, lgSplit:null, lgHrRate:null, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, player:null, swingData:{}, cheered:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, leadOpen:false, feedTradeSeen:null, star:null, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -1701,6 +1766,15 @@ function recordPrediction(g){
     watches:bats.map(watchOf),
     ks:ksFor(g),
     v:CARD_V,
+    /* Which version of the app made this call.
+
+       Nine builds in a fortnight changed how picks are made — the batting order,
+       measured platoon splits, the run spread, the injury filter, the hot-bat
+       pool — and the record could not tell any of them apart, because an entry
+       recorded what was predicted and never what had predicted it. Every change
+       was therefore an assertion that could not be checked. This is one field,
+       and it only works forward, which is the argument for adding it now. */
+    b:BUILD_N,
     at:new Date().toISOString()
   };
   S.cardDirty = true;
@@ -2087,15 +2161,47 @@ function leagueKRate(){
    genuinely elite rate loses to three good nights. Twenty at-bats is a small
    sample and this treats it like one. */
 const WATCH_RECENCY = 4;
+/* Plate appearances of league-average hitting mixed into every rate. A man with
+   five homers in seventy trips reads as one every fourteen and, once the last
+   five games are weighted four times over, as one every six — a figure no hitter
+   in history has managed over a season. Regression is what stops a hot fortnight
+   from outranking a career, and it is the same treatment the platoon splits get.
+   Two hundred is roughly a third of a season: heavy, deliberately. */
+const HR_REGRESS = 200;
+
+/* The league's own home run rate per plate appearance, from the same data. */
+function leagueHrRate(){
+  if(S.lgHrRate != null) return S.lgHrRate;
+  let hr = 0, pa = 0;
+  for(const tid in S.hitters)
+    for(const b of S.hitters[tid]){ hr += b.hr || 0; pa += b.pa || 0; }
+  S.lgHrRate = pa > 20000 ? hr / pa : 0.030;
+  return S.lgHrRate;
+}
 
 function watchRate(b){
-  const base = b.perPA > 0 ? 1 / b.perPA : 0;
+  const lg = leagueHrRate();
   const f = S.hitterForm[b.id];
   const ab = f && Number(f.ab) > 0 ? Number(f.ab) : 0;
   const hr = f && Number(f.hr) >= 0 ? Number(f.hr) : null;
-  if(!ab || hr == null || !isFinite(hr)) return { rate:base, form:null };
-  const rate = (b.hr + WATCH_RECENCY * hr) / (b.pa + WATCH_RECENCY * ab);
-  return isFinite(rate) && rate >= 0 ? { rate, form:f } : { rate:base, form:null };
+  /* Season and recent form first, on their own terms. */
+  const useForm = ab && hr != null && isFinite(hr);
+  /* The last five games are already inside the season line, so adding them again
+     with a weight of four counted them five times over. Harmless for a regular
+     whose fortnight is a twentieth of his season; severe for a call-up whose
+     whole season is the hot streak — his five homers in seventy trips became
+     twenty-five in a hundred and forty, and he read as better than any hitter has
+     ever been over a year. The recent window is taken out of the season figure
+     before it is weighted back in. */
+  const priorHr = Math.max(0, (b.hr || 0) - (useForm ? hr : 0));
+  const priorPa = Math.max(0, (b.pa || 0) - (useForm ? ab : 0));
+  const obsHr = priorHr + (useForm ? WATCH_RECENCY * hr : 0);
+  const obsPa = priorPa + (useForm ? WATCH_RECENCY * ab : 0);
+  if(!(obsPa > 0)) return { rate:0, form:null };
+  /* Then pulled toward the league by a fixed weight of average hitting. */
+  const rate = (obsHr + HR_REGRESS * lg) / (obsPa + HR_REGRESS);
+  return isFinite(rate) && rate >= 0
+    ? { rate, form:useForm ? f : null } : { rate:lg, form:null };
 }
 
 /* Which game of a repeated matchup this is. When two clubs meet twice on one
@@ -2673,7 +2779,14 @@ async function loadHitters(rosters){
     }
 
     const hr = st.homeRuns, pa = st.plateAppearances;
-    if(!hr || hr <= 0 || !pa || pa < 100) continue;
+    /* Thirty rather than a hundred. The old floor was there to keep a rate off a
+       handful of trips out of the ranking, which is right — but it was doing that
+       by dropping the player before anything else could look at him, so a man
+       called up three weeks ago and homering every other night could not be
+       considered at all, whatever he had just done. The rate is regressed toward
+       the league below, which handles the small sample where it should be handled:
+       in the number, not by refusing to look. */
+    if(!hr || hr <= 0 || !pa || pa < 30) continue;
     if(traded) continue;
     (byTeam[tid] = byTeam[tid] || []).push({
       id:pid,
@@ -2701,8 +2814,16 @@ async function loadHitters(rosters){
     const byTotal = all.slice().sort((a, b) => b.hr - a.hr).slice(0, 8);
     const byRate = all.filter(b => b.pa >= 200)
       .sort((a, b) => a.perPA - b.perPA).slice(0, 8);
+    /* And whoever has actually been hitting them lately, whatever his season
+       looks like. Both lists above are season-shaped and a man on a heater in his
+       first month clears neither. This is the arm that notices him. */
+    const byForm = all.filter(b => {
+      const f = S.hitterForm[b.id];
+      return f && Number(f.hr) >= 2;
+    }).sort((a, b) => (Number(S.hitterForm[b.id].hr) || 0)
+                    - (Number(S.hitterForm[a.id].hr) || 0)).slice(0, 4);
     const seen = {}, keep = [];
-    for(const b of byTotal.concat(byRate)){
+    for(const b of byTotal.concat(byRate).concat(byForm)){
       if(seen[b.id]) continue;
       seen[b.id] = true; keep.push(b);
     }
@@ -3392,7 +3513,7 @@ async function loadDetail(){
     S.pitchers = {}; S.bullpens = {}; S.bpLg = null; S.bpLgHr9 = null;
     S.runDef = {}; S.lgCs = null;
     S.rosters = {}; S.bats = {}; S.hitters = {}; S.teamBat = {}; S.runners = {};
-    S.splits = {}; S.lgSplit = null;
+    S.splits = {}; S.lgSplit = null; S.lgHrRate = null;
   }
   S.detailState = "loading";
   render();
@@ -5390,6 +5511,8 @@ function renderOdds(){
         + '<span class="obar" aria-hidden="true"><i style="width:' + Math.max(1.5, x.berth*100) + '%;background:'
           + col(t.id) + '"></i><em>' + pc(x.berth) + '</em></span></button>'; }).join("")
     + calibrationBlock()
+    + gradeBlock()
+    + provenanceBlock()
     + '<div class="method"><h4>How these numbers are made</h4>'
     + '<p>Each club plays out its remaining games at its own winning percentage, pulled toward .500 '
     + 'by ' + REGRESS_SEASON + ' games so a hot stretch does not run away with the forecast. Three division '
@@ -5994,6 +6117,100 @@ function scorecardIO(){
    margins, and a run projection is not a spread. Inventing either would be worse
    than their absence. */
 const PARLAY_KEY = "108.parlay";
+const CHEER_KEY = "108.cheered";
+
+/* ---------------- a card that landed ----------------
+
+   An eight-leg card is built to fail. This one was a one-in-a-hundred-and-fifty
+   shot and it came in, and an app that prints "did not land" forty times without
+   ever changing its face on the day it does is not being restrained, it is being
+   deaf.
+
+   So it is marked, once, in proportion to what it beat — and the marking says
+   what the odds were, because the size of the thing is the point. It also says
+   the honest part in the same breath: a card landing is not evidence the legs are
+   right, exactly as a column of crosses was never evidence they were wrong. Both
+   sentences belong to the same discipline.
+
+   Acknowledged per date so it fires the once and then settles into the ordinary
+   tick in the record. Nobody wants a party every time they open the app. */
+function loadCheered(){
+  try{ return JSON.parse(localStorage.getItem(CHEER_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+
+function markCheered(date){
+  const c = loadCheered();
+  c[date] = true;
+  /* Trimmed, since this only ever needs to answer "has today been seen". */
+  const keys = Object.keys(c).sort();
+  while(keys.length > 40) delete c[keys.shift()];
+  try{ localStorage.setItem(CHEER_KEY, JSON.stringify(c)); }catch(e){}
+  S.cheered = c;
+}
+
+/* The most recent card that landed and has not yet been acknowledged. */
+function freshLanding(){
+  const seen = S.cheered || (S.cheered = loadCheered());
+  const dates = Object.keys(S.parlay).sort().reverse();
+  for(const d of dates){
+    if(seen[d]) continue;
+    const rec = S.parlay[d];
+    const sum = parlaySummary(rec);
+    if(sum.landed && sum.n >= 3) return { date:d, rec, sum };
+  }
+  return null;
+}
+
+/* Five balls leaving at once, on five different arcs, staggered so it reads as a
+   volley rather than a starburst. Drawn rather than fetched, like everything else
+   here, and it runs once through then rests. */
+const CHEER_SCENE = '<svg class="cheersvg" viewBox="0 0 320 70"'
+  + ' preserveAspectRatio="xMidYMid meet" aria-hidden="true">'
+  + '<rect class="wall" x="252" y="16" width="68" height="30" rx="1"/>'
+  + '<path class="cap" d="M252 16 H320"/>'
+  + '<path class="ground" d="M0 60 H320"/>'
+  + '<path class="cheerarc" style="animation-delay:0.00s" d="M28 60 C 96 6, 200 0, 300 20"/>'
+  + '<path class="cheerarc" style="animation-delay:0.13s" d="M28 60 C 88 14, 190 8, 302 34"/>'
+  + '<path class="cheerarc" style="animation-delay:0.26s" d="M28 60 C 104 2, 210 6, 296 12"/>'
+  + '<path class="cheerarc" style="animation-delay:0.39s" d="M28 60 C 80 22, 176 16, 300 46"/>'
+  + '<path class="cheerarc" style="animation-delay:0.52s" d="M28 60 C 112 10, 224 2, 292 26"/>'
+  + '<circle class="cheerball" style="offset-path:path(\'M28 60 C 96 6, 200 0, 300 20\');animation-delay:0.00s"/>'
+  + '<circle class="cheerball" style="offset-path:path(\'M28 60 C 88 14, 190 8, 302 34\');animation-delay:0.13s"/>'
+  + '<circle class="cheerball" style="offset-path:path(\'M28 60 C 104 2, 210 6, 296 12\');animation-delay:0.26s"/>'
+  + '<circle class="cheerball" style="offset-path:path(\'M28 60 C 80 22, 176 16, 300 46\');animation-delay:0.39s"/>'
+  + '<circle class="cheerball" style="offset-path:path(\'M28 60 C 112 10, 224 2, 292 26\');animation-delay:0.52s"/>'
+  + '</svg>';
+
+function cheerBlock(){
+  const win = freshLanding();
+  if(!win) return "";
+  const { rec, sum } = win;
+  const odds = sum.joint > 0 ? Math.round(1 / sum.joint) : null;
+  const kinds = {};
+  for(const l of rec.legs) if(!l.void) kinds[l.kind] = (kinds[l.kind] || 0) + 1;
+  const longest = rec.legs.filter(l => !l.void).slice()
+    .sort((a, b) => a.p - b.p)[0];
+
+  return '<div class="cheer">'
+    + CHEER_SCENE
+    + '<h2>The card landed</h2>'
+    + '<p class="cheerodds">' + sum.n + ' legs'
+      + (odds ? ' · a 1 in ' + odds.toLocaleString() + ' shot' : "")
+      + (sum.joint > 0 ? ' · it said ' + (sum.joint * 100).toFixed(1) + '%' : "") + '</p>'
+    + (longest
+        ? '<p class="cheerwho">The longest of them was <b>' + esc(longest.label) + '</b> at '
+          + Math.round(longest.p * 100) + '%.</p>'
+        : "")
+    + '<p class="note">Worth saying in the same breath: this is not evidence the legs are '
+      + 'right, any more than the forty cards that failed were evidence they were wrong. '
+      + 'A card this length is supposed to fail almost always, and it will. The number to '
+      + 'watch is whether cards land more often than they claim over months — that '
+      + 'would mean the legs are underconfident, which would be a finding. One is a good '
+      + 'day.</p>'
+    + '<button class="btn" id="cheerDone">Put it in the record</button>'
+    + '</div>';
+}
 /* The card is as long as the slate. Fifteen games gives fifteen picks, one from
    each; a four-game night gives eight, found by looking harder at those four.
 
@@ -6363,7 +6580,17 @@ function buildParlay(date){
      check above already guarantees. */
   const sidelined = unavailable();
   const stale = existing && (existing.legs || []).some(l => l.pid && sidelined[l.pid]);
-  if(games.length < 3) return existing || null;
+  /* One game is enough to build on. Three was a reasonable floor while every day
+     had fifteen fixtures; in October there are often two, and in the World Series
+     one, and the rule meant the card simply stopped appearing for the part of the
+     season people care most about.
+
+     The length comes down with the slate, though, because a single game cannot
+     carry eight independent legs and pretending otherwise would put a number at
+     the top that the multiplication does not deserve. Four from one game, eight
+     from two or more — and every shared leg is marked as such, as it already was
+     on a thin night. */
+  if(!games.length) return existing || null;
   const all = [];
   for(const g of games) for(const leg of legsFor(g)) all.push(leg);
   if(!all.length) return existing || null;
@@ -6375,7 +6602,7 @@ function buildParlay(date){
      dropped home runs entirely, because they are systematically the least. So:
      one of every kind available first, then fill to the cap, then fill regardless.
      A card of one bet repeated eight times tests nothing. */
-  const target = parlayTarget();
+  const target = Math.min(parlayTarget(), Math.max(4, games.length * 4));
   const cap = kindCap();
   /* Whether the slate can fill the card from separate fixtures. When it can, no
      game is ever asked twice. */
@@ -6437,7 +6664,8 @@ function buildParlay(date){
   if(existing && !stale && kinds(legs) <= kinds(existing.legs)
      && legs.length <= existing.legs.length) return existing;
   const joint = legs.reduce((n, l) => n * l.p, 1);
-  const rec = { date, at:new Date().toISOString(), legs, joint, built:legs.length };
+  const rec = { date, at:new Date().toISOString(), legs, joint, built:legs.length,
+                b:BUILD_N };
   S.parlay[date] = rec;
   S.parlayDirty = true;
   return rec;
@@ -6486,6 +6714,38 @@ function settleParlay(){
    statistics wiped, so this marks the leg rather than grading it: settleParlay
    and settleParlayFromBox still write the real result when the game ends, and
    they take precedence over anything decided here. */
+/* A leg decided mid-game, once the game is over.
+
+   settleParlayLive marks a leg `clear` when the box score already puts it beyond
+   reach — seven strikeouts against a line of 5.5 cannot come back — but leaves
+   `hit` null on purpose, because a game abandoned before it is official has its
+   statistics wiped and the real box score must have the last word.
+
+   That was right and incomplete. If the real settlement never arrives — the box
+   fetch exhausted its retries, the game finished after the last attempt — the leg
+   sits cleared and ungraded for good, and the card can never land. One did: eight
+   legs, seven graded, every one a hit, one stuck on `clear`, and the record showed
+   a cross above "100% of legs".
+
+   So once the game is genuinely final, a provisional call becomes the real one.
+   The abandonment worry does not survive a final score. */
+function promoteCleared(){
+  const finalPk = {};
+  for(const g of S.games) if(g.st === "final") finalPk[String(g.pk)] = true;
+  for(const f of (S.finals || [])) finalPk[String(f.pk)] = true;
+  let changed = false;
+  for(const d in S.parlay){
+    for(const leg of S.parlay[d].legs || []){
+      if(leg.hit != null || leg.void) continue;
+      if(!leg.clear && !leg.dead) continue;
+      if(!finalPk[String(leg.pk)]) continue;
+      leg.hit = !!leg.clear;
+      changed = true;
+    }
+  }
+  if(changed){ S.parlayDirty = true; saveParlay(); }
+}
+
 function settleParlayLive(){
   const live = {};
   for(const g of S.games) if(g.st === "live") live[String(g.pk)] = g;
@@ -6586,6 +6846,129 @@ function parlaySummary(rec){
            settled:done.length === live.length && live.length > 0,
            landed:done.length === live.length && hit === live.length && live.length > 0,
            joint:live.reduce((n, l) => n * l.p, 1) };
+}
+
+/* Does the letter mean anything?
+
+   The grade judges every number on the card and nothing has judged the grade. If
+   an A leg lands no more often than a C, it is decoration with a confident face,
+   which is the one thing this record exists to prevent.
+
+   The test the grade deserves is not "do A legs win more" — a C on a 25% homer
+   should lose most of the time, and it would fail a raw hit-rate test while being
+   perfectly well behaved. The question is whether each grade lands as often as it
+   said it would. A letter that means anything should show the higher grades
+   closer to their own claims. */
+function gradeCheck(){
+  const acc = {};
+  for(const d in S.parlay){
+    for(const leg of (S.parlay[d].legs || [])){
+      if(leg.hit == null || leg.void) continue;
+      const ev = evidence({ kind:leg.kind, pa:leg.pa, gs:leg.gs, p:leg.p,
+        posted:leg.posted, tba:leg.tba });
+      if(!ev) continue;
+      const r = acc[ev.letter] || (acc[ev.letter] = { n:0, hit:0, exp:0 });
+      r.n++; r.exp += leg.p; if(leg.hit) r.hit++;
+    }
+  }
+  const out = [];
+  for(const L of ["A", "B", "C", "D"]) if(acc[L] && acc[L].n) out.push({ letter:L, ...acc[L] });
+  return out;
+}
+
+function gradeBlock(){
+  const rows = gradeCheck();
+  const total = rows.reduce((n, r) => n + r.n, 0);
+  if(total < 40) return '<h4 class="swhead">Does the letter mean anything?</h4>'
+    + '<p>Not enough settled legs to say \u2014 ' + total + ' so far, and this needs a few '
+    + 'hundred. The grade judges every number on the card and nothing yet judges the grade. '
+    + 'Until this fills, treat the letter as a stated intention rather than a tested one.</p>';
+  const row = r => '<div class="brow"><span>' + r.letter + '</span>'
+    + '<em>' + r.n + '</em>'
+    + '<em>' + Math.round(100 * r.hit / r.n) + '%</em>'
+    + '<em>' + Math.round(100 * r.exp / r.n) + '%</em>'
+    + '<em>' + (r.hit - r.exp >= 0 ? "+" : "\u2212")
+      + Math.abs(r.hit - r.exp).toFixed(1) + '</em></div>';
+  const gap = r => Math.abs(r.hit - r.exp) / r.n;
+  const best = rows.slice().sort((a, b) => gap(a) - gap(b))[0];
+  const worst = rows.slice().sort((a, b) => gap(b) - gap(a))[0];
+  return '<h4 class="swhead">Does the letter mean anything?</h4>'
+    + '<div class="builds">'
+    + '<div class="brow head"><span>grade</span><em>legs</em><em>landed</em><em>said</em><em>gap</em></div>'
+    + rows.map(row).join("") + '</div>'
+    + '<p>Not whether the higher grades win more \u2014 a C on a 25% home run is supposed to '
+    + 'lose, and would fail that test while behaving perfectly. The question is whether each '
+    + 'grade lands as often as it claimed. '
+    + (best && worst && best.letter !== worst.letter
+        ? '<b>' + best.letter + ' is closest to its own claim and ' + worst.letter
+          + ' furthest.</b> ' + (best.letter < worst.letter
+              ? 'That is the order the letter is supposed to produce.'
+              : 'That is the wrong way round, which is evidence against the grade rather '
+                + 'than for it.')
+        : "")
+    + ' Over ' + total + ' settled legs, which is still short of a verdict.</p>';
+}
+
+/* ---------------- what has been measured, and what has not ----------------
+
+   The app has both kinds of number and the difference has been scattered across
+   a dozen notes, which means it is only legible to someone reading the source.
+   Some of these were fitted or swept against results; some are constants I chose
+   and stated plainly, which is honest but is not the same as tested.
+
+   Kept next to the code it describes so it cannot drift: when a constant becomes
+   measured, its row moves here rather than being remembered. */
+const PROVENANCE = [
+  { what:"Home-field advantage", how:"measured",
+    note:"the season's own home win rate, and the baseline the model is scored against" },
+  { what:"Team strength", how:"measured",
+    note:"run differential beat win-loss by 0.0016 Brier over 1,346 games" },
+  { what:"Starter weight", how:"measured",
+    note:"swept; 0.15 best, and the four-corner test says starters help by 0.0010" },
+  { what:"Bullpen weight", how:"assumed",
+    note:"cannot be tested \u2014 no record of which relievers were available on a given day" },
+  { what:"Probability mapping", how:"measured",
+    note:"fitted on the record and applied only while its held-out test says it helps" },
+  { what:"Run projection spread", how:"measured",
+    note:"4.5 runs, from a mean error near 3.6 across every run made" },
+  { what:"Run projection shrink", how:"measured",
+    note:"slope fitted from the calibration's own bands" },
+  { what:"Park factor", how:"measured",
+    note:"measured twice at no effect, and removed from the projection on that basis" },
+  { what:"Strikeout projection", how:"measured",
+    note:"best-calibrated thing here, about two strikeouts off" },
+  { what:"Bat home run rate", how:"measured",
+    note:"corrected by a mapping fitted to 700-odd graded picks" },
+  { what:"Platoon splits", how:"measured",
+    note:"each hitter's own record against each hand, regressed toward the league" },
+  { what:"Batting order", how:"assumed",
+    note:"the plate-appearance curve by slot is the league's known shape, not fitted here" },
+  { what:"Air and wind on home runs", how:"assumed",
+    note:"stated in the source, damped, and never tested against a result" },
+  { what:"Contact platoon scale", how:"assumed",
+    note:"half the power split, which is roughly right and is not measured" },
+  { what:"Regression amounts", how:"assumed",
+    note:"the weights pulling small samples toward the league are judgements" },
+  { what:"The evidence grade", how:"assumed",
+    note:"nothing yet checks whether A legs land more often than C legs" },
+  { what:"Steal chance", how:"assumed",
+    note:"scaled by the defence's caught-stealing rate, which is measured; the rest is not" }
+];
+
+function provenanceBlock(){
+  const rows = k => PROVENANCE.filter(p => p.how === k).map(p =>
+    '<div class="prow"><span>' + esc(p.what) + '</span>'
+    + '<em>' + esc(p.note) + '</em></div>').join("");
+  const m = PROVENANCE.filter(p => p.how === "measured").length;
+  return '<h4 class="swhead">What is measured and what is not</h4>'
+    + '<p>Of ' + PROVENANCE.length + ' things the app leans on, ' + m + ' have been tested '
+    + 'against results and ' + (PROVENANCE.length - m) + ' have not. Both kinds are stated '
+    + 'in the source; this is the same division, gathered in one place. An assumption is not '
+    + 'necessarily wrong \u2014 it is untested, which is a different complaint and a fixable '
+    + 'one.</p>'
+    + '<div class="prov"><div class="phead">Measured against results</div>' + rows("measured")
+    + '<div class="phead warn">Asserted, and not yet tested</div>' + rows("assumed")
+    + '</div>';
 }
 
 /* ---------------- why this pick ----------------
@@ -7334,6 +7717,64 @@ function scorecardBlock(){
           + 'this is where that would show.</p>';
       })()
 
+    /* What the stamp is for: the same measurements, either side of a change.
+
+       Split at the first build the record can see a difference across, so the
+       comparison is between versions of the app rather than between arbitrary
+       dates. Both halves are shown with their sample sizes, because the whole
+       point is that a fortnight of picks cannot settle anything and the reader
+       should be able to see that for themselves. */
+    + (() => {
+        const byBuild = {};
+        for(const key in S.card){
+          const e = S.card[key];
+          if(!e || e.hs == null) continue;
+          const b = e.b || 0;
+          const r = byBuild[b] || (byBuild[b] = { n:0, right:0, watch:0, watchHr:0,
+                                                  watchExp:0, kN:0, kErr:0 });
+          r.n++;
+          if(gradedP(e) != null && (gradedP(e) >= 0.5) === (e.hs > e.as)) r.right++;
+          for(const w of watchList(e)){
+            if(!w.result || w.dnp || w.p == null) continue;
+            r.watch++; r.watchExp += w.p;
+            if(w.result.hr > 0) r.watchHr++;
+          }
+          for(const k of (e.ks || [])){
+            if(k.actual == null || k.scratched || k.exp == null) continue;
+            r.kN++; r.kErr += Math.abs(k.exp - k.actual);
+          }
+        }
+        const builds = Object.keys(byBuild).map(Number).sort((a, b) => a - b);
+        if(builds.length < 2) return "";
+        /* Two groups: everything before the newest stamped build, and it. */
+        const cut = builds[builds.length - 1];
+        const roll = list => list.reduce((acc, b) => {
+          const r = byBuild[b];
+          acc.n += r.n; acc.right += r.right; acc.watch += r.watch;
+          acc.watchHr += r.watchHr; acc.watchExp += r.watchExp;
+          acc.kN += r.kN; acc.kErr += r.kErr;
+          return acc;
+        }, { n:0, right:0, watch:0, watchHr:0, watchExp:0, kN:0, kErr:0 });
+        const before = roll(builds.filter(b => b < cut));
+        const after = roll(builds.filter(b => b >= cut));
+        if(!before.n || !after.n) return "";
+        const row = (label, r) => '<div class="brow"><span>' + label + '</span>'
+          + '<em>' + (r.n ? Math.round(100 * r.right / r.n) + '%' : "\u2014") + '</em>'
+          + '<em>' + (r.watch
+              ? r.watchHr + '/' + r.watch + ' vs ' + r.watchExp.toFixed(1) : "\u2014") + '</em>'
+          + '<em>' + (r.kN ? (r.kErr / r.kN).toFixed(1) : "\u2014") + '</em></div>';
+        return '<div class="builds">'
+          + '<div class="worsttitle">Either side of build ' + cut + '</div>'
+          + '<div class="brow head"><span></span><em>sides</em><em>bats</em><em>K miss</em></div>'
+          + row('before, ' + before.n + ' games', before)
+          + row('since, ' + after.n + ' games', after)
+          + '</div>'
+          + '<p class="note">Predictions carry the build that made them, so a change to how '
+          + 'picks are chosen can be measured rather than asserted. Read it with the sample '
+          + 'sizes in mind: a few days either side settles nothing, and the two halves are '
+          + 'shown precisely so that is visible rather than hidden inside one average.</p>';
+      })()
+
     + '<p class="note cdsum">'
       + (s.n
           ? 'Sides called right ' + Math.round(s.acc * 100) + '% of the time '
@@ -7591,6 +8032,9 @@ function keepTheRecord(){
   settleScorecard();
   settleParlay();
   settleParlayLive();
+  /* After the live pass, so anything it marked this minute is promoted the moment
+     its game goes final rather than waiting a whole cycle. */
+  promoteCleared();
   if(S.parlayDirty){ saveParlay(); S.parlayDirty = false; }
   if(S.cardDirty){ saveScorecard(); S.cardDirty = false; }
   settlePicksFromBox();
@@ -7601,6 +8045,12 @@ function renderPlays(){
   const upcoming = S.games.filter(g => g.date === today && g.st === "sched")
     .sort((a,b) => new Date(a.start) - new Date(b.start));
   const waiting = S.detailState === "loading" || !Object.keys(S.pitchers).length;
+
+  /* Outside the games-today branch. A card lands at night, by which time every
+     game is final and `upcoming` is empty — so tucked in there it could only ever
+     have appeared on a day when it had nothing to say, and never on the evening it
+     happened. */
+  const cheer = cheerBlock();
 
   const card = upcoming.length
     ? '<h2 class="eyebrow">Today\'s card \u00b7 ' + upcoming.length + ' games</h2>'
@@ -7637,12 +8087,17 @@ function renderPlays(){
     : "";
 
   if(!card)
-    return '<div class="pane"><div class="empty"><h3>Nothing on today\'s card</h3>'
+    /* The celebration goes above this too. An empty slate is exactly the state a
+       landed card is discovered in \u2014 every game final, nothing upcoming \u2014 so an
+       early return that skipped it meant the one evening it had something to say
+       was the one evening it could not say it. */
+    return '<div class="pane">' + cheer
+      + '<div class="empty"><h3>Nothing on today\'s card</h3>'
       + '<p>Projections appear once MLB posts the probable starters, usually the evening '
       + 'before. Games already under way move to the Today tab.</p></div>'
       + parlayBlock() + scorecardBlock() + '</div>';
 
-  return '<div class="pane">' + card + parlayBlock() + scorecardBlock() + '</div>';
+  return '<div class="pane">' + cheer + card + parlayBlock() + scorecardBlock() + '</div>';
 }
 
 function render(resetScroll){
@@ -7815,6 +8270,13 @@ document.addEventListener("click", e => {
   if(e.target.closest("[data-recordolder]")){ S.recordOlder = !S.recordOlder; render(); return; }
 
   if(e.target.closest("[data-leadmore]")){ S.leadOpen = !S.leadOpen; render(); return; }
+
+  if(e.target.closest("#cheerDone")){
+    const win = freshLanding();
+    if(win) markCheered(win.date);
+    render();
+    return;
+  }
 
   const fd = e.target.closest("[data-feed]");
   if(fd){ S.feedMine = fd.dataset.feed === "mine"; render(); return; }
