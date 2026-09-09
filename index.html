@@ -807,6 +807,25 @@ ul{margin:0;padding:0;list-style:none;}
 .empty{margin-top:22px;padding:18px;border:1px solid var(--line);border-radius:5px;background:var(--deep);}
 .empty h3{font-family:var(--display);font-size:17px;text-transform:uppercase;margin-bottom:8px;}
 .empty p{font-size:12.5px;line-height:1.65;color:var(--slate);}
+.bracket{display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px;}
+@media(min-width:620px){ .bracket{grid-template-columns:1fr 1fr;} }
+.bkside{background:var(--deep);border:1px solid var(--line);border-radius:5px;
+  padding:9px 11px 7px;}
+.bkhead{font-family:var(--display);font-size:14px;letter-spacing:.04em;
+  color:var(--chalk);margin-bottom:6px;}
+.bkrow{display:grid;grid-template-columns:14px 3px 1fr 34px 34px 34px 38px;
+  gap:5px;align-items:center;padding:4px 0;}
+.bkrow + .bkrow{border-top:1px solid rgba(34,67,74,.5);}
+.bkrow .bkseed{font-family:var(--mono);font-size:9.5px;color:#5B7378;text-align:center;}
+.bkteam{font-family:var(--display);font-size:13px;color:var(--chalk);
+  display:flex;align-items:baseline;gap:5px;min-width:0;}
+.bkteam em{font-style:normal;font-family:var(--mono);font-size:8.5px;color:#5B7378;}
+.bkrow em{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--slate);
+  text-align:right;}
+.bkrow b{font-family:var(--mono);font-size:10.5px;color:var(--bulb);text-align:right;}
+.bkrow.head em,.bkrow.head b{font-size:8px;letter-spacing:.06em;text-transform:uppercase;
+  color:#5B7378;}
+.miss{color:var(--blush);}
 .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0 0 0 0);white-space:nowrap;border:0;}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
@@ -827,7 +846,7 @@ const MLB = "https://statsapi.mlb.com/api/v1";
 const WX  = "https://api.open-meteo.com/v1/forecast";
 /* Bumped whenever this file changes, and printed in the footer, so "is the
    new version actually deployed?" is answerable without guessing. */
-const BUILD = "150 \u2014 no accidental zoom, and a card in October";
+const BUILD = "151 \u2014 a playoff bracket, and the app says what failed to load";
 /* The number on its own, for stamping predictions. A build string is prose and
    changes shape; this is what the record splits on. */
 const BUILD_N = 147;
@@ -950,6 +969,107 @@ function pictureOf(lg){
   const rest = inLg(lg).filter(t => !leaders.includes(t));
   return { seeds: leaders.slice().sort((a,b) => pct(b)-pct(a)),
            wilds: rest.slice(0,3), chasing: rest.slice(3) };
+}
+
+/* ---------------- the bracket ----------------
+
+   The Odds tab plays out the remaining regular season, which stops meaning
+   anything the moment there are no games left. From that point the interesting
+   question is a different one, and the app had no way to ask it.
+
+   The format, which has been unchanged since 2022: three division winners and
+   three wild cards in each league. Division winners take seeds one to three by
+   record, wild cards four to six, and a wild card with a better record than a
+   division winner still seeds below it. One and two sit out the first round.
+   Three plays six and four plays five, best of three, every game at the higher
+   seed. There is no reseeding, so one meets the winner of four and five, and two
+   meets the winner of three and six. The division round is best of five, the
+   higher seed hosting games one, two and five. Both championship series and the
+   World Series are best of seven, the higher seed hosting one, two, six and
+   seven; in the World Series that goes to the better regular-season record.
+
+   The strength model is the one the rest of the app uses — a club's rate against
+   its opponent's, in log odds, plus home field. No postseason adjustment, because
+   there is nothing measured to base one on: the honest position is that a short
+   series is mostly the same teams with more variance, and the variance is what
+   the simulation is for. */
+const SERIES = { wc:{ len:3, home:[1,1,1] },
+                 ds:{ len:5, home:[1,1,0,0,1] },
+                 cs:{ len:7, home:[1,1,0,0,0,1,1] } };
+
+function playoffField(){
+  const out = {};
+  for(const lg of ["AL", "NL"]){
+    const p = pictureOf(lg);
+    if(p.seeds.length < 3 || p.wilds.length < 3) return null;
+    out[lg] = p.seeds.slice(0, 3).concat(p.wilds.slice(0, 3));
+  }
+  return out;
+}
+
+/* One series, higher seed first. */
+function playSeries(hi, lo, kind, rate, rnd){
+  const f = SERIES[kind];
+  const need = Math.ceil((f.len + 1) / 2);
+  /* Clubs come in as team objects but the rate map is keyed by id. Indexing it
+     with the object gave undefined, the log of that is NaN, every comparison
+     against NaN is false, and so the lower seed won every game of every series —
+     a bracket in which the sixth seed took the title a hundred times out of a
+     hundred. Accepts either now. */
+  const rh = rate[hi && hi.id != null ? hi.id : hi];
+  const rl = rate[lo && lo.id != null ? lo.id : lo];
+  if(!(rh > 0 && rh < 1 && rl > 0 && rl < 1)) return hi;
+  const edge = Math.log(rh / (1 - rh)) - Math.log(rl / (1 - rl));
+  let a = 0, b = 0;
+  for(let g = 0; g < f.len && a < need && b < need; g++){
+    const d = edge + (f.home[g] === 1 ? HFA : -HFA);
+    if(rnd() < 1 / (1 + Math.exp(-d))) a++; else b++;
+  }
+  return a > b ? hi : lo;
+}
+
+function simulateBracket(sims){
+  const field = playoffField();
+  if(!field) return null;
+  const rate = {}, wins = {}, rounds = {};
+  for(const lg in field) for(const t of field[lg]){
+    rate[t.id] = teamRate(t);
+    wins[t.id] = 0;
+    rounds[t.id] = { ds:0, cs:0, ws:0, title:0 };
+  }
+  let seed = 20260901;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const better = (x, y) => pct(x) >= pct(y) ? x : y;
+
+  for(let i = 0; i < sims; i++){
+    const champ = {};
+    for(const lg in field){
+      const s = field[lg];
+      /* Seeds one and two wait; three plays six and four plays five. */
+      const w36 = playSeries(s[2], s[5], "wc", rate, rnd);
+      const w45 = playSeries(s[3], s[4], "wc", rate, rnd);
+      for(const t of [s[0], s[1], w36, w45]) rounds[t.id].ds++;
+      /* No reseeding: one meets the four-five winner, two meets three-six. */
+      const d1 = playSeries(s[0], w45, "ds", rate, rnd);
+      const d2 = playSeries(s[1], w36, "ds", rate, rnd);
+      for(const t of [d1, d2]) rounds[t.id].cs++;
+      const hi = pct(d1) >= pct(d2) ? d1 : d2, lo = hi === d1 ? d2 : d1;
+      champ[lg] = playSeries(hi, lo, "cs", rate, rnd);
+      rounds[champ[lg].id].ws++;
+    }
+    const a = champ.AL, b = champ.NL;
+    const hi = better(a, b), lo = hi === a ? b : a;
+    const title = playSeries(hi, lo, "cs", rate, rnd);
+    rounds[title.id].title++;
+    wins[title.id]++;
+  }
+  const out = {};
+  for(const lg in field) out[lg] = field[lg].map((t, i) => ({
+    id:t.id, seed:i + 1, w:t.w, l:t.l,
+    ds:rounds[t.id].ds / sims, cs:rounds[t.id].cs / sims,
+    ws:rounds[t.id].ws / sims, title:rounds[t.id].title / sims
+  }));
+  return { field:out, sims };
 }
 
 /* The last good standings and schedule, kept so the app opens with something
@@ -5216,6 +5336,47 @@ function sweep(){
 }
 
 /* The calibration table, on demand because it replays 1,500 games. */
+/* The bracket, once there is one worth showing.
+
+   Shown when the regular season is close to done, because before that the field
+   is a guess about a race rather than a bracket. Both are honest, but only one is
+   a bracket, and the block says which it is looking at. */
+function bracketBlock(){
+  const remaining = list().reduce((n, t) => n + left(t), 0);
+  if(remaining > 300) return "";          // still a season to play
+  const b = simulateBracket(4000);
+  if(!b) return "";
+  const set = remaining === 0;
+  const pct2 = v => v >= 0.995 ? "\u2713" : v < 0.005 ? "\u2014" : Math.round(v * 100) + "%";
+  const row = t => '<div class="bkrow">'
+    + '<span class="bkseed">' + t.seed + '</span>'
+    + '<span class="tbar" style="background:' + col(t.id) + '" aria-hidden="true"></span>'
+    + '<span class="bkteam">' + ab(t.id) + '<em>' + t.w + '\u2013' + t.l + '</em></span>'
+    + '<em>' + pct2(t.ds) + '</em><em>' + pct2(t.cs) + '</em>'
+    + '<em>' + pct2(t.ws) + '</em><b>' + pct2(t.title) + '</b></div>';
+  const side = lg => '<div class="bkside"><div class="bkhead">' + lg + '</div>'
+    + '<div class="bkrow head"><span></span><span></span><span></span>'
+    + '<em>DS</em><em>CS</em><em>WS</em><b>win</b></div>'
+    + b.field[lg].map(row).join("") + '</div>';
+
+  return SEAM + '<h2 class="eyebrow">' + (set ? "The bracket" : "The bracket as it stands")
+    + '</h2>'
+    + '<div class="bracket">' + side("AL") + side("NL") + '</div>'
+    + '<p class="note">' + (set
+        ? 'The field is set. '
+        : 'The season is not quite over, so the field below is who would qualify on '
+          + 'today\'s records rather than who has. ')
+    + 'Three plays six and four plays five, best of three at the higher seed; one and two '
+    + 'wait. There is no reseeding, so one meets the four-five winner and two meets three '
+    + 'and six. Then best of five, and best of seven twice.</p>'
+    + '<p class="note">Played out ' + b.sims.toLocaleString() + ' times from the same club '
+    + 'strength the rest of the app uses \u2014 run differential against the opponent\'s, '
+    + 'plus home field. There is no postseason adjustment, because nothing here has '
+    + 'measured one. A short series is mostly the same clubs with more variance, and the '
+    + 'variance is what these numbers are: the best team in the field still loses most of '
+    + 'the time, which is the point of the format rather than a failure of it.</p>';
+}
+
 function calibrationBlock(){
   if(!S.cal){
     return '<div class="method"><h4>Has any of this been right?</h4>'
@@ -5510,6 +5671,7 @@ function renderOdds(){
         + '<span class="tnum dim sm">' + pc(x.top) + '%</span>'
         + '<span class="obar" aria-hidden="true"><i style="width:' + Math.max(1.5, x.berth*100) + '%;background:'
           + col(t.id) + '"></i><em>' + pc(x.berth) + '</em></span></button>'; }).join("")
+    + bracketBlock()
     + calibrationBlock()
     + gradeBlock()
     + provenanceBlock()
@@ -8152,7 +8314,29 @@ function render(resetScroll){
     + 'Odds simulated in this browser from the records above.<br>'
     + 'Build ' + BUILD
     + (Object.keys(S.diag).length
-        ? '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","spHistory","rosters","bats","splits","hitters","hitterForm"]
+        ? /* What did not come back, named.
+
+           Every fetch in loadDetail degrades silently on purpose — a missing
+           bullpen figure should not take the app down. The cost is that a reader
+           cannot tell "this returned nothing" from "this is not in the list", and
+           the app loses whole features without saying so. The roster failure that
+           removed every platoon term was only caught because someone happened to
+           notice a zero in a line of counts and asked what it meant.
+
+           An empty count is a failure, since none of these legitimately return
+           nothing when the season is running. */
+          (() => {
+            const want = { pitchers:"starters", bullpens:"bullpens", rosters:"rosters",
+                           bats:"handedness", splits:"platoon splits", hitters:"hitters" };
+            const missing = [];
+            for(const k in want)
+              if(S.diag[k] === 0 || S.diag[k] == null) missing.push(want[k]);
+            return missing.length
+              ? '<br><span class="miss">Did not load: ' + missing.join(", ")
+                + ' \u2014 the picks run without them.</span>'
+              : "";
+          })()
+        + '<br>Loaded: ' + ["pitchers","form","bullpens","h2h","remaining","spHistory","rosters","bats","splits","hitters","hitterForm"]
             .filter(k => S.diag[k] != null)
             .map(k => k + ' ' + S.diag[k]).join(' \u00b7 ')
         : "")
