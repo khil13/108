@@ -936,7 +936,7 @@ const CLUB_IDS = Object.keys(T).map(Number).sort((a,b) => ab(a) < ab(b) ? -1 : 1
 const S = {
   tab:"today", lg:{odds:"NL"},
   teams:null, games:[], venues:{}, wx:{}, pitchers:{}, hitters:{}, open:{},
-  bullpens:{}, bpLg:null, bpLgHr9:null, runDef:{}, lgCs:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, splits:{}, lgSplit:null, lgHrRate:null, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, player:null, swingData:{}, cheered:null, diag:{}, notesOpen:false,
+  bullpens:{}, bpLg:null, bpLgHr9:null, runDef:{}, lgCs:null, teamBat:{}, runners:{}, bats:{}, steals:{}, rosters:{}, activeRoster:{}, splits:{}, lgSplit:null, lgHrRate:null, feed:[], feedState:"idle", feedAt:null, feedMine:false, feedOlder:false, card:{}, cardDirty:false, hitterForm:{}, h2h:{}, series:{}, runs:{}, finals:null, remaining:null, cal:null, calBusy:false, calFit:null, spHistory:null, sweep:null, detailState:"idle", detailAt:null, detailDay:null, detailForce:false, wxAt:null, box:{}, lastPlay:{}, boxAt:null, sheetReturn:null, player:null, swingData:{}, cheered:null, diag:{}, notesOpen:false,
   follow:119, picker:false, baseline:null,
   odds:null, simBusy:false, calOut:null, calAt:null, ioMsg:null, recordOlder:false, leadOpen:false, feedTradeSeen:null, star:null, batFit:{}, batFitN:{}, parlay:{}, parlayDirty:false,
   phase:"loading", err:null, at:null, stale:false, sheet:null, swing:null, swingBusy:false
@@ -2848,6 +2848,42 @@ async function loadRosters(){
   return { club:out, bats };
 }
 
+/* Who MLB itself says can play tonight, which is a different question from
+   who unavailable() has caught.
+
+   unavailable() only sees a placement inside the transactions feed's
+   twelve-day window, and the pool of candidates is otherwise closed off from
+   the injured list only once a lineup is posted, a few hours before first
+   pitch. A man out longer than twelve days, on a morning when the card is
+   built before any lineup drops, passes both checks clean and gets named —
+   which is exactly backwards, since he is the one case where the app has had
+   the most time to find out. The active roster is the list MLB itself uses to
+   decide who can take the field, so asking it directly closes the gap the
+   other two leave open.
+
+   Failing closed: an empty result here means "not fetched yet" or "the fetch
+   failed," never "nobody is on a roster," so a broken request degrades to
+   exactly today's behavior rather than silently emptying every pick. */
+async function loadActiveRoster(){
+  const out = {};
+  try{
+    const yr = new Date().getFullYear();
+    const j = await getJSON(MLB + "/teams?sportId=1&season=" + yr
+      + "&rosterType=active&hydrate=roster(person)");
+    for(const t of j.teams || []){
+      if(!T[t.id]) continue;
+      const list = Array.isArray(t.roster) ? t.roster
+        : (t.roster && Array.isArray(t.roster.roster)) ? t.roster.roster : null;
+      if(!list) continue;
+      for(const entry of list){
+        const pid = (entry.person || {}).id;
+        if(pid) out[pid] = true;
+      }
+    }
+  }catch(e){}
+  return out;
+}
+
 /* Every regular's season hitting line in one request, sorted by home runs,
    then grouped by club. A 100 plate-appearance floor keeps a callup with two
    homers in nine games out of the leaders. */
@@ -3211,10 +3247,11 @@ async function loadFeed(){
    window, and only the last word counts. Multi-player entries carry every id, so
    a trade that folded several notices into one row still resolves each of them.
 
-   What this cannot see: a man placed on the list before the feed's window opens,
-   about twelve days. That is a real gap, and the lineup filter closes it a few
-   hours before first pitch. This closes the morning, which is when the card is
-   built. */
+   What this cannot see on its own: a man placed on the list before the feed's
+   window opens, about twelve days. The lineup filter closes that a few hours
+   before first pitch, which is too late for a card built in the morning — so
+   below, the active roster closes the rest of it: anyone the app is naming
+   who is missing from it gets caught here too, whatever the feed saw. */
 function unavailable(){
   const out = {};
   const feed = (S.feed || []).slice().sort((a, b) =>
@@ -3227,6 +3264,20 @@ function unavailable(){
       if(tag === "back") delete out[id];
       else out[id] = tag === "injured" ? "on the injured list" : "sent down";
     }
+  }
+  /* Only once the active roster has actually loaded — an empty map means the
+     fetch has not landed or failed, not that the league is empty, and this
+     must never read that as everyone being out. Scoped to players the app
+     already has in memory rather than the whole league, since those are the
+     only ones a pick could ever name. */
+  const active = S.activeRoster;
+  if(active && Object.keys(active).length){
+    for(const tid in S.hitters)
+      for(const b of S.hitters[tid])
+        if(b.id && !active[b.id]) out[b.id] = out[b.id] || "not on the active roster";
+    for(const tid in S.runners)
+      for(const r of S.runners[tid])
+        if(r.id && !active[r.id]) out[r.id] = out[r.id] || "not on the active roster";
   }
   return out;
 }
@@ -3633,7 +3684,7 @@ async function loadDetail(){
     S.pitchers = {}; S.bullpens = {}; S.bpLg = null; S.bpLgHr9 = null;
     S.runDef = {}; S.lgCs = null;
     S.rosters = {}; S.bats = {}; S.hitters = {}; S.teamBat = {}; S.runners = {};
-    S.splits = {}; S.lgSplit = null; S.lgHrRate = null;
+    S.splits = {}; S.lgSplit = null; S.lgHrRate = null; S.activeRoster = {};
   }
   S.detailState = "loading";
   render();
@@ -3677,6 +3728,9 @@ async function loadDetail(){
     S.hitters = hit.byTeam || {};
     S.teamBat = hit.teamBat || {};
     S.runners = hit.runners || {};
+    /* Same cadence as the roster it checks against. */
+    S.activeRoster = await loadActiveRoster();
+    S.diag.activeRoster = Object.keys(S.activeRoster).length;
     render();
   }
   S.diag.hitters = Object.values(S.hitters).reduce((n,a) => n + a.length, 0);
