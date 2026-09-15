@@ -7638,6 +7638,19 @@ function leaderboardBlock(games){
         : "");
 }
 
+/* What a named player has done so far tonight, while his leg is still open.
+   The box score is already fetched for every live game to grade picks and
+   drive settleParlayLive; this just reads the same object one line down,
+   before the leg clears rather than after. Once it clears or the game ends,
+   leg.actual says the same thing in the same place, so this stops the moment
+   that happens rather than repeating it. */
+function legLiveLine(leg){
+  if(leg.hit != null || leg.void || leg.clear || leg.dead || !leg.pid) return "";
+  const b = S.box[boxKey(leg.pk, leg.pid)];
+  if(!b || !b.today) return "";
+  return b.today + " so far";
+}
+
 /* The card, with the number that decides it at the top rather than the bottom. */
 function parlayBlock(){
   const today = iso(new Date());
@@ -7673,7 +7686,8 @@ function parlayBlock(){
                   ev ? esc(ev.why) : "",
                   leg.actual ? esc(leg.actual) : "",
                   leg.hit == null && leg.clear ? "already clear" : "",
-                  leg.hit == null && leg.dead ? "already gone" : ""].filter(Boolean);
+                  leg.hit == null && leg.dead ? "already gone" : "",
+                  esc(legLiveLine(leg))].filter(Boolean);
     return '<div class="cdpick">'
       + '<span class="cdmark ' + mark[0] + '">' + mark[1] + '</span>'
       + '<span class="cdwho">' + esc(leg.label)
