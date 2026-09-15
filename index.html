@@ -6803,9 +6803,27 @@ function buildParlay(date){
      badly, it is one made without information that existed. Replacing it before a
      pitch is thrown is not revision with hindsight — the alternative is carrying a
      number everyone can see is zero. Only while nothing has started, which the
-     check above already guarantees. */
+     check above already guarantees.
+
+     A day-to-day scratch is the same story from a different source. He never
+     generates a transaction, so the feed never sees him and the active roster
+     still lists him — the only fact MLB ever publishes about him not playing
+     is the lineup itself once it drops. rankedBats already refuses to name
+     him in a fresh pick once that happens; this is what lets the same fact
+     retire a pick already sitting on the card, before the game he'd have
+     played in ever starts. */
   const sidelined = unavailable();
-  const stale = existing && (existing.legs || []).some(l => l.pid && sidelined[l.pid]);
+  const gameByPk = {};
+  for(const g of games) gameByPk[String(g.pk)] = g;
+  const legStale = l => {
+    if(l.pid && sidelined[l.pid]) return true;
+    if(!l.pid || !l.team) return false;
+    const g = gameByPk[String(l.pk)];
+    if(!g) return false;
+    const lu = lineupIds(g, l.team);
+    return !!(lu && lu.indexOf(l.pid) < 0);
+  };
+  const stale = existing && (existing.legs || []).some(legStale);
   /* One game is enough to build on. Three was a reasonable floor while every day
      had fifteen fixtures; in October there are often two, and in the World Series
      one, and the rule meant the card simply stopped appearing for the part of the
