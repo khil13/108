@@ -6401,6 +6401,16 @@ const parlayTarget = () => PARLAY_LEGS;
    that stops them naming the same player every night. */
 const kindCap = () => 2;
 
+/* Every Tuesday, on the promotion the sport itself already runs: a home run in
+   the game means free tacos. The card echoes it rather than competing with the
+   usual mix — for one day a week it drops the other four kinds entirely and
+   names the four bats the app likes best to go deep, slate-wide. */
+const DINGER_LEGS = 4;
+function isDingerDay(date){
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y, m - 1, d).getDay() === 2;   // 0=Sun ... 2=Tue
+}
+
 function loadParlay(){
   try{
     const raw = localStorage.getItem(PARLAY_KEY);
@@ -6756,6 +6766,30 @@ function buildParlay(date){
   const all = [];
   for(const g of games) for(const leg of legsFor(g)) all.push(leg);
   if(!all.length) return existing || null;
+
+  /* Dinger Tuesday: the same discipline, a different card. One bat per name
+     rather than one leg per game, because the theme is the bet — two of these
+     four are allowed to come from the same fixture on purpose. Two names is
+     the floor; four is not always there this early in a slate's build. */
+  if(isDingerDay(date)){
+    const seen = {}, legs = [];
+    for(const leg of all.filter(l => l.kind === "hr").sort((a, b) => b.p - a.p)){
+      if(seen[leg.pid]) continue;
+      seen[leg.pid] = true;
+      legs.push(leg);
+      if(legs.length >= DINGER_LEGS) break;
+    }
+    if(legs.length < 2) return existing || null;
+    if(existing && !stale && existing.theme === "dinger"
+       && legs.length <= existing.legs.length) return existing;
+    const joint = legs.reduce((n, l) => n * l.p, 1);
+    const rec = { date, at:new Date().toISOString(), legs, joint, built:legs.length,
+                  b:BUILD_N, theme:"dinger" };
+    S.parlay[date] = rec;
+    S.parlayDirty = true;
+    return rec;
+  }
+
   all.sort((a, b) => b.p - a.p);
 
   /* One leg per game, and built in three passes so the card is actually varied.
@@ -7652,13 +7686,19 @@ function parlayBlock(){
       + '</div>';
   };
 
-  let out = SEAM + '<h2 class="eyebrow">Card of the day</h2>';
+  const dingerToday = isDingerDay(today);
+  let out = SEAM + '<h2 class="eyebrow">' + (dingerToday ? "Dinger Tuesday" : "Card of the day") + '</h2>';
 
   if(!rec){
     out += '<div class="empty"><h3>No card today</h3>'
-      + '<p>A card is built once MLB has posted enough of today\u2019s probable starters, '
-      + 'and needs at least three games to draw from. Games already under way are not '
-      + 'eligible \u2014 nothing here is picked after first pitch.</p></div>';
+      + (dingerToday
+          ? '<p>Dinger Tuesday swaps the usual mix for the four bats the app likes best to '
+            + 'go deep, slate-wide. It still waits on MLB\u2019s probable starters and posted '
+            + 'lineups, and needs at least two rated bats to draw from. Games already under '
+            + 'way are not eligible \u2014 nothing here is picked after first pitch.</p>'
+          : '<p>A card is built once MLB has posted enough of today\u2019s probable starters, '
+            + 'and needs at least three games to draw from. Games already under way are not '
+            + 'eligible \u2014 nothing here is picked after first pitch.</p>') + '</div>';
   } else {
     const s = parlaySummary(rec);
     out += '<div class="cdblk">'
@@ -7695,7 +7735,14 @@ function parlayBlock(){
       + '</div>'
       + rec.legs.map(legRow).join("")
       + '</div>'
-      + ((rec.legs || []).some(l => l.shared)
+      + (rec.theme === "dinger"
+          ? '<p class="note"><b>Two of these can share a game.</b> The usual card refuses '
+            + 'that on purpose \u2014 an over and a home run in the same park rise together, '
+            + 'so multiplying them as independent would flatter the joint figure. Today '
+            + 'trades that discipline for the theme deliberately: it is four home run bats '
+            + 'or it is not Dinger Tuesday. The correlation is real and undisclosed in the '
+            + 'number at the top, more so than on the ordinary mixed card.</p>'
+          : (rec.legs || []).some(l => l.shared)
           ? '<p class="note"><b>Some legs share a game.</b> The slate was too short to '
             + 'fill the card from separate fixtures, so a few games were asked for a '
             + 'second or third pick rather than the card being cut short. Those legs are '
@@ -7718,32 +7765,52 @@ function parlayBlock(){
       + 'arm earns a C, and the row says which of those cost it the most. A high '
       + 'percentage with a low letter is a number the app believes but cannot yet '
       + 'support.</p>'
-      + '<p class="note">Every leg is the app\u2019s own number, recorded before first '
-      + 'pitch and graded below. The figure at the top is their product: the chance all '
-      + (s.n === 1 ? "of it lands" : "of them land") + ' together, which is the only '
-      + 'number a parlay actually turns on. One leg per game, so the multiplication is '
-      + 'not inflated by two legs that would fail for the same reason.</p>'
-      + '<p class="note"><b>Read that top figure before anything else.</b> The record on '
-      + 'this tab says the side model is behind backing the home team, the run projection '
-      + 'is behind guessing the league average. Legs built from those do not become '
-      + 'reliable by being multiplied together \u2014 the product falls faster than any '
-      + 'of them improves. There is also no price here: without a book\u2019s number this '
-      + 'cannot tell you a leg is mispriced, only how likely the app thinks it is.</p>'
-      + '<p class="note">Eight legs, whatever the slate offers. Five kinds \u2014 the '
-      + 'side, the run total, a starter\u2019s strikeouts, a home run and a steal \u2014 '
-      + 'one of each first, then a second of each, so no kind takes more than a quarter '
-      + 'of the card. The card followed the number of games for a while, which gave '
-      + 'thirteen and fifteen leg cards at one in twenty thousand and worse: those cannot '
-      + 'land, so they cannot tell you anything. Filling the last places by probability '
-      + 'instead of by kind handed them all to strikeouts and run totals, leaving one slot '
-      + 'each for homers and steals \u2014 and one slot is one name, the best of that kind '
-      + 'on the slate, who is the same player most nights. Home runs and steals were dropped for a '
-      + 'stretch when the homer picks were running three sigma under their own '
-      + 'expectation; what fixed that was not removing them but measuring the bias and '
-      + 'correcting for it, so the homer legs now use the number the record has mapped '
-      + 'rather than the raw one. Steal legs remain the weakest: how often a runner '
-      + 'actually starts is only known once a lineup is posted, and the leg says which '
-      + 'of the two it is.</p>'
+      + (rec.theme === "dinger"
+          ? '<p class="note">Every leg is the app\u2019s own number for a home run '
+            + 'tonight, recorded before first pitch and graded below exactly as an ordinary '
+            + 'homer leg always is. The figure at the top is their product: the chance all '
+            + 'four land together. Four legs of the one kind the record itself calls the '
+            + 'shakiest is not steadier for being homogeneous \u2014 it is that component '
+            + 'to the fourth power, on top of the sharing disclosed above.</p>'
+          : '<p class="note">Every leg is the app\u2019s own number, recorded before first '
+            + 'pitch and graded below. The figure at the top is their product: the chance all '
+            + (s.n === 1 ? "of it lands" : "of them land") + ' together, which is the only '
+            + 'number a parlay actually turns on. One leg per game, so the multiplication is '
+            + 'not inflated by two legs that would fail for the same reason.</p>')
+      + (rec.theme === "dinger"
+          ? '<p class="note"><b>Read that top figure before anything else.</b> There is no '
+            + 'price here to call this an edge against, only the app\u2019s own calibrated '
+            + 'rate for each bat \u2014 and homers are the component that rate has had to '
+            + 'move the furthest to keep honest. Four of them multiplied is a long shot even '
+            + 'when each one individually looks like a good bat in a good spot.</p>'
+          : '<p class="note"><b>Read that top figure before anything else.</b> The record on '
+            + 'this tab says the side model is behind backing the home team, the run projection '
+            + 'is behind guessing the league average. Legs built from those do not become '
+            + 'reliable by being multiplied together \u2014 the product falls faster than any '
+            + 'of them improves. There is also no price here: without a book\u2019s number this '
+            + 'cannot tell you a leg is mispriced, only how likely the app thinks it is.</p>')
+      + (rec.theme === "dinger"
+          ? '<p class="note">Four bats, not eight legs. The promotion this riffs on is about '
+            + 'home runs specifically, so for one day a week the card drops the other four '
+            + 'kinds \u2014 side, run total, strikeouts, steals \u2014 rather than diluting the '
+            + 'theme with a prop that has nothing to do with going deep. They are the best '
+            + 'four bats on the whole slate by the app\u2019s own calibrated rate, one '
+            + 'appearance per name, drawn from every game rather than one per fixture.</p>'
+          : '<p class="note">Eight legs, whatever the slate offers. Five kinds \u2014 the '
+            + 'side, the run total, a starter\u2019s strikeouts, a home run and a steal \u2014 '
+            + 'one of each first, then a second of each, so no kind takes more than a quarter '
+            + 'of the card. The card followed the number of games for a while, which gave '
+            + 'thirteen and fifteen leg cards at one in twenty thousand and worse: those cannot '
+            + 'land, so they cannot tell you anything. Filling the last places by probability '
+            + 'instead of by kind handed them all to strikeouts and run totals, leaving one slot '
+            + 'each for homers and steals \u2014 and one slot is one name, the best of that kind '
+            + 'on the slate, who is the same player most nights. Home runs and steals were dropped for a '
+            + 'stretch when the homer picks were running three sigma under their own '
+            + 'expectation; what fixed that was not removing them but measuring the bias and '
+            + 'correcting for it, so the homer legs now use the number the record has mapped '
+            + 'rather than the raw one. Steal legs remain the weakest: how often a runner '
+            + 'actually starts is only known once a lineup is posted, and the leg says which '
+            + 'of the two it is.</p>')
       + '<p class="note">More legs is not more chances \u2014 it is fewer. Every leg '
       + 'multiplies the card down and the ones added last are the least likely, which is '
       + 'why the length is fixed rather than following the slate. The figure at the top '
